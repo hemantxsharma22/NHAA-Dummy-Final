@@ -1,9 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { assessmentService } from '../../server/assessmentService'
 
-process.env.OPENROUTER_API_KEY =
-  process.env.OPENROUTER_API_KEY ||
-  Buffer.from('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==', 'base64').toString('utf8')
+process.env.OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim()
 
 const EMERGENCY_REPLY =
   'Your immediate safety is our highest priority. If you or your loved ones are facing imminent physical danger right now, please reach out to local police or our toll-free 24x7 emergency helpline at 14566 immediately. We can connect you to emergency protection and an emergency nodal officer.'

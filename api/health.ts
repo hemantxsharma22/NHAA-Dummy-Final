@@ -2,14 +2,17 @@ import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 export default function handler(_req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
-  const hasKey = Boolean(
-    process.env.OPENROUTER_API_KEY ||
-      Buffer.from('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==', 'base64').toString('utf8')
-  )
+  const hasGroqKey = Boolean(process.env.GROQ_API_KEY)
+  const hasOpenRouterKey = Boolean(process.env.OPENROUTER_API_KEY)
   return res.json({
     status: 'ok',
     service: 'NHAA Stress & Trauma Assessment Serverless Backend',
-    has_openrouter_key: hasKey,
-    model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    has_groq_key: hasGroqKey,
+    groq_model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+    has_openrouter_key: hasOpenRouterKey,
+    active_provider: hasGroqKey ? 'groq' : (hasOpenRouterKey ? 'openrouter' : 'heuristic'),
+    model: hasGroqKey
+      ? (process.env.GROQ_MODEL || 'openai/gpt-oss-120b')
+      : (process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'),
   })
 }

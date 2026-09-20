@@ -1,9 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { assessmentService } from '../server/assessmentService'
 
-process.env.OPENROUTER_API_KEY =
-  process.env.OPENROUTER_API_KEY ||
-  Buffer.from('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==', 'base64').toString('utf8')
+process.env.OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim()
 
 const SAFETY_KEYWORDS = [
   'kill', 'suicide', 'die', 'murder', 'weapon', 'attack', 'bomb', 'blood',
