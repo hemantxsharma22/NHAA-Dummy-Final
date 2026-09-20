@@ -16,7 +16,6 @@ process.env.GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim()
 process.env.GROQ_MODEL = (process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim()
 
 process.env.OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim()
-process.env.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'nex-agi/nex-n2.5-pro:free'
 
 
 const app = express()
@@ -50,11 +49,11 @@ apiRouter.get('/health', async (_req, res) => {
     status: 'ok',
     service: 'NHAA Stress & Trauma Assessment Backend',
     has_groq_key: hasGroqKey,
-    groq_model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    groq_model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
     has_openrouter_key: hasOpenRouterKey,
     active_provider: hasGroqKey ? 'groq' : (hasOpenRouterKey ? 'openrouter' : 'heuristic'),
     model: hasGroqKey
-      ? (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile')
+      ? (process.env.GROQ_MODEL || 'openai/gpt-oss-120b')
       : (process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'),
     demo_mode: process.env.DEMO_MODE === 'true' || !hasKey,
     safety_model: {
@@ -439,8 +438,10 @@ if (!process.env.VERCEL) {
   const HOST = process.env.HOST || '0.0.0.0'
   const server = app.listen(Number(PORT), HOST, () => {
     console.log(`NHAA Secure Backend API running on http://${HOST}:${PORT}`)
-    console.log(`Groq Key: ${process.env.GROQ_API_KEY ? 'Configured (' + (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile') + ')' : 'Not configured'}`)
-    console.log(`OpenRouter Key: ${process.env.OPENROUTER_API_KEY ? 'Configured (' + (process.env.OPENROUTER_MODEL || 'nex-agi/nex-n2.5-pro:free') + ')' : 'DEMO MODE (Local Heuristics Active)'}`)
+    console.log(`Groq Key: ${process.env.GROQ_API_KEY ? 'Configured (' + (process.env.GROQ_MODEL || 'openai/gpt-oss-120b') + ')' : 'Not configured'}`)
+    if (process.env.OPENROUTER_API_KEY) {
+      console.log(`OpenRouter Key: Configured (${process.env.OPENROUTER_MODEL || 'nex-agi/nex-n2.5-pro:free'})`)
+    }
 
     const safetyStatusReport = safetyStatus()
     console.log(
