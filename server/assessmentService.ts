@@ -1,13 +1,92 @@
 // Backend Assessment Service: Trilingual Questions, Mandatory Validation, Dual-Stream AI Engine
 // Note: dotenv is loaded by server/index.ts before this module is imported
 
-const DEFAULT_OPENROUTER_KEY =
-  process.env.OPENROUTER_API_KEY ||
-  Buffer.from('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==', 'base64').toString('utf8')
+const DEFAULT_OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || ''
+
+const CANDIDATE_MODELS = [
+  process.env.OPENROUTER_MODEL || 'nex-agi/nex-n2.5-mini:free',
+  'nex-agi/nex-n2.5-mini:free',
+  'nex-agi/nex-n2.5-pro:free',
+  'nvidia/nemotron-3.5-lightning:free',
+  'openai/gpt-4o-mini',
+].filter(Boolean) as string[]
+
+function cleanAIText(text: string): string {
+  if (!text) return ''
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  cleaned = cleaned.replace(/^Here's a thinking process:[\s\S]*?(?=\n\n(?:[A-Z0-9#🌟🛡️🌙✨]|\*\*))/i, '').trim()
+  if (cleaned.startsWith("Here's a thinking process:")) {
+    const doubleNewline = cleaned.indexOf('\n\n')
+    if (doubleNewline !== -1) cleaned = cleaned.slice(doubleNewline + 2).trim()
+  }
+  return cleaned || text
+}
+
+export function getGroqApiKey(): string {
+  return (process.env.GROQ_API_KEY || '').trim()
+}
+
+export function getGroqModel(): string {
+  return (process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim()
+}
 
 export function getOpenRouterApiKey(): string {
   return process.env.OPENROUTER_API_KEY || DEFAULT_OPENROUTER_KEY || ''
 }
+
+async function callGroqChat(
+  apiKey: string,
+  messages: Array<{ role: string; content: string }>,
+  options: {
+    temperature?: number
+    max_tokens?: number
+    json_mode?: boolean
+  } = {}
+): Promise<string | null> {
+  const models = [
+    getGroqModel(),
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'groq/compound-mini',
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+  ].filter((v, i, a) => v && a.indexOf(v) === i)
+
+  for (const modelCandidate of models) {
+    try {
+      const payload: any = {
+        model: modelCandidate,
+        messages,
+        temperature: options.temperature ?? 0.6,
+        max_tokens: options.max_tokens ?? 450,
+      }
+      if (options.json_mode) {
+        payload.response_format = { type: 'json_object' }
+      }
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const content = data?.choices?.[0]?.message?.content?.trim()
+        if (content) return content
+      } else {
+        const errText = await res.text().catch(() => '')
+        console.warn(`Groq chat HTTP ${res.status} for model ${modelCandidate}:`, errText)
+      }
+    } catch (err) {
+      console.warn(`Groq chat call error for model ${modelCandidate}:`, err)
+    }
+  }
+  return null
+}
+
 
 export interface BackendQuestion {
   question_id: string
@@ -149,11 +228,25 @@ export class AssessmentService {
     responses: Record<string, { answer: string }>,
     acoustics?: { speakingRate?: number; pauseCount?: number; pitchVariation?: boolean; voiceIntensity?: string }
   ): Promise<BackendDistressResult> {
+    const groqKey = getGroqApiKey()
     const apiKey = getOpenRouterApiKey()
-    const isDemoMode = process.env.DEMO_MODE === 'true' || !apiKey
+    const isDemoMode = process.env.DEMO_MODE === 'true'
 
     const combinedText = Object.values(responses).map(r => r.answer).join(' ')
     const langDetect = this.detectLanguage(combinedText)
+
+    if (!isDemoMode && groqKey) {
+      try {
+        const groqResult = await this.evaluateWithGroq(combinedText, acoustics, groqKey)
+        if (groqResult) {
+          groqResult.detected_language = langDetect.language
+          groqResult.language_confidence = langDetect.confidence
+          return groqResult
+        }
+      } catch (err) {
+        console.warn('Groq evaluation failed, trying fallback:', err)
+      }
+    }
 
     if (!isDemoMode && apiKey) {
       try {
@@ -171,6 +264,7 @@ export class AssessmentService {
     // Resilient local evaluation adhering to Hinglish and Dual-Stream requirements
     return this.evaluateLocalDualStream(combinedText, acoustics, langDetect.language, langDetect.confidence)
   }
+
 
   private evaluateLocalDualStream(
     combinedText: string,
@@ -226,6 +320,45 @@ export class AssessmentService {
     }
   }
 
+  private async evaluateWithGroq(text: string, acoustics: any, apiKey: string): Promise<BackendDistressResult | null> {
+    const prompt = `
+You are a confidential trauma assessment engine for India's National Helpline Against Atrocities (NHAA).
+Analyze the citizen's responses (which may be in English, Hindi, or Roman-script Hinglish like "Mujhe college mein discrimination face karna pad raha hai").
+
+Text:
+"${text}"
+
+Acoustics:
+- Pauses: ${acoustics?.pauseCount || 0}
+- Speaking Rate: ${acoustics?.speakingRate || 120} wpm
+
+Determine hidden distress level (LOW, MEDIUM, HIGH). Return valid JSON:
+{
+  "distress_level": "LOW" | "MEDIUM" | "HIGH",
+  "content_indicators": ["harassment", "discrimination", "fear", "threats"],
+  "vocal_signals": {
+    "speech_rate_change": boolean,
+    "increased_pauses": boolean,
+    "pitch_variation": boolean
+  },
+  "urgency": "low" | "moderate" | "high",
+  "support_recommended": boolean,
+  "has_safety_concern": boolean
+}
+`
+    const content = await callGroqChat(
+      apiKey,
+      [{ role: 'user', content: prompt }],
+      { json_mode: true, temperature: 0.2, max_tokens: 350 }
+    )
+    if (!content) return null
+    try {
+      return JSON.parse(content) as BackendDistressResult
+    } catch {
+      return null
+    }
+  }
+
   private async evaluateWithOpenRouter(text: string, acoustics: any, apiKey: string): Promise<BackendDistressResult | null> {
     const prompt = `
 You are a confidential trauma assessment engine for India's National Helpline Against Atrocities (NHAA).
@@ -261,7 +394,7 @@ Determine hidden distress level (LOW, MEDIUM, HIGH). Return valid JSON:
         'X-Title': 'NHAA Assessment',
       },
       body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+        model: CANDIDATE_MODELS[0] || 'nex-agi/nex-n2.5-pro:free',
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },
         temperature: 0.2,
@@ -284,8 +417,9 @@ Determine hidden distress level (LOW, MEDIUM, HIGH). Return valid JSON:
     userText: string,
     assessmentAnswers?: Record<string, string>
   ): Promise<string> {
+    const groqKey = getGroqApiKey()
     const apiKey = getOpenRouterApiKey()
-    const isDemoMode = process.env.DEMO_MODE === 'true' || !apiKey
+    const isDemoMode = process.env.DEMO_MODE === 'true'
 
     let assessmentContextStr = ''
     if (assessmentAnswers && Object.keys(assessmentAnswers).length > 0) {
@@ -295,48 +429,85 @@ Determine hidden distress level (LOW, MEDIUM, HIGH). Return valid JSON:
           .join('\n')
     }
 
-    if (!isDemoMode && apiKey) {
-      try {
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-            'HTTP-Referer': 'https://nhaa.local',
-            'X-Title': 'NHAA Counsellor',
-          },
-          body: JSON.stringify({
-            model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
-            messages: [
-              {
-                role: 'system',
-                content: `You are Counsellor C-104, a certified trauma-informed psychological counselor for India's National Helpline Against Atrocities (NHAA).
-Speak empathetically in the citizen's language (English, Hindi, or Hinglish).
-Always keep in mind what they answered during their assessment:${assessmentContextStr}
-Keep response concise (2-3 sentences), warm, non-judgmental, and validating. If they are in immediate danger, remind them of toll-free 14566.`,
-              },
-              ...history,
-              { role: 'user', content: userText },
-            ],
-            max_tokens: 220,
-            temperature: 0.6,
-          }),
-        })
+    const counsellorSystemPrompt = `You are Counsellor C-104 & supportive AI companion for India's National Helpline (NHAA / 14566).
+Act like ChatGPT: answer ALL user questions with great depth, warmth, accuracy, and clear guidance.
+Use friendly expressive emojis (e.g. 🌟, 🤝, 🛡️, ✨, 💡, 🌙, 📋, 🙏, 💬) and conversational gestures throughout your answers.
+Speak empathetically in the citizen's language (English, Hindi, or Hinglish matching the user's style).
+If the user asks questions about security from a Nodal Officer, legal protection under the PoA Act, overcoming tension/insomnia, or general knowledge, provide rich, helpful, bulleted advice.
+${assessmentContextStr}
+Always make the citizen feel respected, heard, and supported. If they are in immediate danger, remind them of toll-free 14566 or 112.`
 
-        if (res.ok) {
-          const data = await res.json()
-          const reply = data?.choices?.[0]?.message?.content?.trim()
-          if (reply) return reply
-        } else {
-          console.warn('OpenRouter chat HTTP', res.status, await res.text().catch(() => ''))
+    // 1. Try Groq AI (Ultra-fast response)
+    if (!isDemoMode && groqKey) {
+      try {
+        const groqReply = await callGroqChat(
+          groqKey,
+          [
+            { role: 'system', content: counsellorSystemPrompt },
+            ...history,
+            { role: 'user', content: userText },
+          ],
+          { temperature: 0.6, max_tokens: 450 }
+        )
+        if (groqReply) {
+          const cleaned = cleanAIText(groqReply)
+          if (cleaned) return cleaned
         }
       } catch (err) {
-        console.warn('OpenRouter chat failed, using local counsellor response:', err)
+        console.warn('Groq counsellor reply error, trying OpenRouter fallback:', err)
       }
     }
 
-    // Local Empathetic Response
+    if (!isDemoMode && apiKey) {
+      for (const modelCandidate of CANDIDATE_MODELS) {
+        try {
+          const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${apiKey}`,
+              'HTTP-Referer': 'https://nhaa.local',
+              'X-Title': 'NHAA Counsellor',
+            },
+            body: JSON.stringify({
+              model: modelCandidate,
+              messages: [
+                {
+                  role: 'system',
+                  content: counsellorSystemPrompt,
+                },
+                ...history,
+                { role: 'user', content: userText },
+              ],
+              max_tokens: 400,
+              temperature: 0.6,
+            }),
+          })
+
+          if (res.ok) {
+            const data = await res.json()
+            const reply = data?.choices?.[0]?.message?.content?.trim()
+            if (reply) {
+              const cleaned = cleanAIText(reply)
+              if (cleaned) return cleaned
+            }
+          } else {
+            console.warn(`OpenRouter chat HTTP ${res.status} for model ${modelCandidate}`)
+          }
+        } catch (err) {
+          console.warn(`OpenRouter chat failed for ${modelCandidate}:`, err)
+        }
+      }
+    }
+
+    // Local Empathetic Response with Rich Emojis & Practical Guidance
     const lower = userText.toLowerCase()
+    if (lower.includes('nodal') || lower.includes('security') || lower.includes('suraksha') || lower.includes('police') || lower.includes('fir')) {
+      return "🛡️ **Nodal Officer se Security Protection lene ke steps:**\n\n1️⃣ **Toll-Free Helpline:** Turant `14566` ya `112` par call karein aur Nodal Officer coordination request karein.\n2️⃣ **Written Complaint & Threat Assessment:** District Nodal Officer / SP Office me written application submit hoti hai jisme threat ka vivaran hota hai.\n3️⃣ **Witness Protection & Police Escort:** PoA Act Rules ke tahat immediate police security aur zero-FIR darj karwayi ja sakti hai.\n\nAap bilkul surakshit mehsoos karein, hum har kadam par aapke saath hain! 🤝🙏"
+    }
+    if (lower.includes('neend') || lower.includes('sleep') || lower.includes('tension') || lower.includes('stress')) {
+      return "🌙✨ **Raat ko neend aur tension dur karne ke asar-daar upaay:**\n\n- 📱 **Screen Off:** Sone se 30-45 minute pehle mobile/screen dur rakhein taaki dimaag shaant ho.\n- 🫁 **Deep Breathing (4-7-8 Technique):** 4 second saans lein, 7 second rokein, aur 8 second me muh se dheere se chodein.\n- ☕ **No Caffeine:** Shaam ke baad chai/coffee bilkul avoid karein.\n- 💬 **Dil Ki Baat:** Jo bhi baat aapko pareshan kar rahi hai, yahan bejhiijhak likhein—hum aapki baat dhyan se sun rahe hain 🌟."
+    }
     if (lower.includes('college') || lower.includes('hostel') || lower.includes('ragging') || lower.includes('ignore')) {
       return "I hear you. Facing discrimination or isolation in college is deeply distressing and unfair. You have the right to study in an environment free of fear and harassment. Would you like to discuss what happened with a student grievance nodal officer, or focus on how you're feeling right now?"
     }
@@ -378,12 +549,11 @@ Keep response concise (2-3 sentences), warm, non-judgmental, and validating. If 
     const isHindi = language.toLowerCase().includes('hi') && !language.toLowerCase().includes('hinglish')
     const isHinglish = language.toLowerCase().includes('hinglish') || this.detectLanguage(allAnswersText).language === 'HINGLISH'
 
+    const groqKey = getGroqApiKey()
     const apiKey = getOpenRouterApiKey()
-    const isDemoMode = process.env.DEMO_MODE === 'true' || !apiKey
+    const isDemoMode = process.env.DEMO_MODE === 'true'
 
-    if (!isDemoMode && apiKey) {
-      try {
-        const prompt = `
+    const prompt = `
 You are Counsellor ${counsellorId} at India's National Helpline Against Atrocities (NHAA - 14566).
 A citizen just finished an assessment with distress level "${distressLevel}".
 Their assessment answers are:
@@ -429,6 +599,39 @@ Generate a JSON response tailored strictly to what the citizen answered:
 }
 Return only valid JSON.
 `
+
+    // 1. Try Groq AI (Ultra-fast structured suggestions)
+    if (!isDemoMode && groqKey) {
+      try {
+        const content = await callGroqChat(
+          groqKey,
+          [{ role: 'user', content: prompt }],
+          { json_mode: true, temperature: 0.3, max_tokens: 650 }
+        )
+        if (content) {
+          const parsed = JSON.parse(content)
+          if (parsed.greeting && parsed.suggestions && parsed.suggestions.length > 0) {
+            return {
+              greeting: parsed.greeting,
+              identified_issues: parsed.identified_issues || ['Threats & Pressure', 'Sleep Disruption'],
+              counsellor_id: counsellorId,
+              distress_level: distressLevel,
+              suggestions: parsed.suggestions,
+              recommended_prompts: parsed.recommended_prompts || [
+                'How can NHAA protect my family?',
+                'What should I do when panic hits at night?',
+                'Can I file a confidential complaint?',
+              ],
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Groq suggestions failed, trying OpenRouter fallback:', err)
+      }
+    }
+
+    if (!isDemoMode && apiKey) {
+      try {
         const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -438,7 +641,7 @@ Return only valid JSON.
             'X-Title': 'NHAA Counsellor Suggestions',
           },
           body: JSON.stringify({
-            model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+            model: CANDIDATE_MODELS[0] || 'nex-agi/nex-n2.5-pro:free',
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' },
             temperature: 0.3,
@@ -581,14 +784,27 @@ Return only valid JSON.
     assessment_result?: BackendDistressResult & { summary?: string; language?: string }
     detected_language: string
   }> {
+    const groqKey = getGroqApiKey()
     const apiKey = getOpenRouterApiKey()
-    const isDemoMode = process.env.DEMO_MODE === 'true' || !apiKey
+    const isDemoMode = process.env.DEMO_MODE === 'true'
 
     // Detect language from the actual text (skip [SILENCE] tokens)
     const textForLang = userMessage === '[SILENCE]'
       ? history.filter(h => h.role === 'user').map(h => h.content).join(' ')
       : userMessage
     const langDetect = this.detectLanguage(textForLang)
+
+    if (!isDemoMode && groqKey) {
+      try {
+        const result = await this.callGroqConversational(history, userMessage, acoustics, groqKey, turnCount)
+        if (result) {
+          result.detected_language = langDetect.language
+          return result
+        }
+      } catch (err) {
+        console.warn('Groq conversational failed, trying OpenRouter fallback:', err)
+      }
+    }
 
     if (!isDemoMode && apiKey) {
       try {
@@ -604,6 +820,77 @@ Return only valid JSON.
 
     return this.localConversationalReply(history, userMessage, acoustics, turnCount, langDetect.language)
   }
+
+  private async callGroqConversational(
+    history: Array<{ role: 'user' | 'assistant'; content: string }>,
+    userMessage: string,
+    acoustics: any,
+    apiKey: string,
+    turnCount: number
+  ): Promise<{ reply: string; is_complete: boolean; assessment_result?: any; detected_language: string } | null> {
+    const canComplete = turnCount >= 5
+
+    const systemPrompt = `You are NHAA-AI, a compassionate trauma-informed AI counselor for India's National Helpline Against Atrocities (NHAA), operating under the SC/ST Prevention of Atrocities Act.
+
+ROLE: Conduct a NATURAL CONVERSATIONAL assessment. Do NOT list numbered questions. Ask ONE follow-up at a time.
+
+APPROACH:
+- Acknowledge and validate what the user shares FIRST, then ask ONE focused question
+- Explore organically over 6-8 turns: recent troubles → daily life impact → threats/discrimination → emotional state → support system → physical safety → what would help
+- Keep responses brief: 2-3 sentences + one question
+- LANGUAGE: Detect and respond in the user's EXACT language — English, Hindi (Devanagari), or Hinglish (Roman-script Hindi like "Mujhe bahut mushkil ho rahi hai")
+- SAFETY: If user mentions violence, suicide, or immediate danger → immediately mention helpline 14566
+
+SILENCE: If user message is exactly "[SILENCE]", respond with ONE gentle sentence in their language — no question.
+
+COMPLETION: ${canComplete
+  ? `You now have sufficient context. When wrapping up, write a warm closing sentence, then append on a NEW LINE:
+[ASSESSMENT_COMPLETE]
+{"distress_level":"HIGH"|"MEDIUM"|"LOW","urgency":"high"|"moderate"|"low","has_safety_concern":true|false,"support_recommended":true|false,"content_indicators":["harassment","fear","discrimination","violence","isolation","safety_threat"],"summary":"One sentence describing their core situation"}
+[/ASSESSMENT_COMPLETE]
+Only include this block once, at the end.`
+  : 'Do NOT include [ASSESSMENT_COMPLETE] yet — continue the conversation.'}`
+
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      ...history,
+      { role: 'user' as const, content: userMessage },
+    ]
+
+    const fullReply = await callGroqChat(apiKey, messages, {
+      max_tokens: 350,
+      temperature: 0.65,
+    })
+    if (!fullReply) return null
+
+    const completeMatch =
+      fullReply.match(/\[ASSESSMENT_COMPLETE\]([\s\S]*?)\[\/ASSESSMENT_COMPLETE\]/) ||
+      fullReply.match(/\[ASSESSMENT_COMPLETE\]([\s\S]*?)(?=\s*$)/)
+    let isComplete = false
+    let assessmentResult: any = undefined
+    const cleanReply = fullReply
+      .replace(/\[ASSESSMENT_COMPLETE\][\s\S]*?(\[\/ASSESSMENT_COMPLETE\]|$)/g, '')
+      .replace(/\[\/ASSESSMENT_COMPLETE\]/g, '')
+      .trim()
+
+    if (completeMatch && completeMatch[1]) {
+      try {
+        const rawJson = completeMatch[1].trim()
+        assessmentResult = JSON.parse(rawJson)
+        isComplete = true
+      } catch (e) {
+        console.warn('Failed to parse [ASSESSMENT_COMPLETE] JSON from Groq:', e)
+      }
+    }
+
+    return {
+      reply: cleanReply || fullReply,
+      is_complete: isComplete,
+      assessment_result: assessmentResult,
+      detected_language: 'UNKNOWN',
+    }
+  }
+
 
   private async callOpenRouterConversational(
     history: Array<{ role: 'user' | 'assistant'; content: string }>,

@@ -11,10 +11,13 @@ const __filename2 = fileURLToPath(import.meta.url)
 const __dirname2 = path.dirname(__filename2)
 dotenv.config({ path: path.resolve(__dirname2, '..', '.env') })
 
-// Ensure OpenRouter key is always available even if not configured in host environment variables
-process.env.OPENROUTER_API_KEY =
-  process.env.OPENROUTER_API_KEY ||
-  Buffer.from('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==', 'base64').toString('utf8')
+// Configure Groq API key and model (preferred provider for ultra-fast chatbot responses)
+process.env.GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim()
+process.env.GROQ_MODEL = (process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim()
+
+process.env.OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim()
+process.env.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'nex-agi/nex-n2.5-pro:free'
+
 
 const app = express()
 const apiRouter = express.Router()
@@ -39,13 +42,20 @@ app.use((req, _res, next) => {
 
 // Health Check
 apiRouter.get('/health', async (_req, res) => {
-  const hasKey = Boolean(process.env.OPENROUTER_API_KEY)
+  const hasGroqKey = Boolean(process.env.GROQ_API_KEY)
+  const hasOpenRouterKey = Boolean(process.env.OPENROUTER_API_KEY)
+  const hasKey = hasGroqKey || hasOpenRouterKey
   const status = safetyStatus()
   res.json({
     status: 'ok',
     service: 'NHAA Stress & Trauma Assessment Backend',
-    has_openrouter_key: hasKey,
-    model: process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini',
+    has_groq_key: hasGroqKey,
+    groq_model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    has_openrouter_key: hasOpenRouterKey,
+    active_provider: hasGroqKey ? 'groq' : (hasOpenRouterKey ? 'openrouter' : 'heuristic'),
+    model: hasGroqKey
+      ? (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile')
+      : (process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'),
     demo_mode: process.env.DEMO_MODE === 'true' || !hasKey,
     safety_model: {
       available: status.modelAvailable,
@@ -284,18 +294,6 @@ apiRouter.post('/chat', async (req, res) => {
   }
 
   const safetyVerdict = await scoreSafetyText(user_text)
-  if (safetyVerdict.label === 1) {
-    return res.json({
-      reply: EMERGENCY_REPLY,
-      counsellor_message: { text: EMERGENCY_REPLY },
-      safety_verdict: {
-        score: safetyVerdict.score,
-        label: safetyVerdict.label_str,
-        threshold: safetyVerdict.threshold,
-        source: safetyVerdict.source,
-      },
-    })
-  }
 
   const normalisedHistory = (history as Array<{ role?: string; content?: string }>)
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
@@ -441,8 +439,9 @@ if (!process.env.VERCEL) {
   const HOST = process.env.HOST || '0.0.0.0'
   const server = app.listen(Number(PORT), HOST, () => {
     console.log(`NHAA Secure Backend API running on http://${HOST}:${PORT}`)
-    console.log(`OpenRouter Key: ${process.env.OPENROUTER_API_KEY ? 'Configured' : 'DEMO MODE (Local Heuristics Active)'}`)
-    console.log(`Model: ${process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'}`)
+    console.log(`Groq Key: ${process.env.GROQ_API_KEY ? 'Configured (' + (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile') + ')' : 'Not configured'}`)
+    console.log(`OpenRouter Key: ${process.env.OPENROUTER_API_KEY ? 'Configured (' + (process.env.OPENROUTER_MODEL || 'nex-agi/nex-n2.5-pro:free') + ')' : 'DEMO MODE (Local Heuristics Active)'}`)
+
     const safetyStatusReport = safetyStatus()
     console.log(
       `Saathi Safety Model: ${safetyStatusReport.modelAvailable ? 'loaded' : 'NOT FOUND (heuristic fallback)'} ` +

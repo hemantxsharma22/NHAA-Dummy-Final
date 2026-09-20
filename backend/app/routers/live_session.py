@@ -18,6 +18,57 @@ logger = logging.getLogger("router.live_session")
 router = APIRouter(prefix="/api/sessions", tags=["Live Session"])
 
 
+COMMON_ALERT_KEYWORDS = [
+    # Hindi Threat / Violence
+    "मारने वाला", "मारने वाली", "मारने", "मारना", "मार देंगे", "मार देगा", "मार दूंगा", "मारूंगी", "जान से मार",
+    "कत्ल", "हत्या", "खून", "धमकी", "धमका", "हमला", "खत्म कर", "सबक सिखा", "बख्शेंगे", "जिंदा नहीं",
+    # Hindi Fear / Panic
+    "डर", "घबराहट", "दहशत", "खौफ", "सहम", "कांप", "चीख", "रो रहा", "रो रही", "पैनिक",
+    # Hindi Safety / Urgency
+    "सुरक्षा", "सुरक्षा दीजिए", "सुरक्षा चाहिए", "बचाओ", "बचा लो", "मदद", "मदद करो", "मदद चाहिए", "खतरा", "खतरे में",
+    # Hindi Weapons / Proximity / Isolation
+    "चाकू", "पिस्तौल", "बंदूक", "हथियार", "दरवाजा", "बाहर खड़ा", "अंदर घुस", "अकेला", "अकेली",
+    # Hinglish & English
+    "marne wala", "marne", "marna", "maar denge", "dhamki", "darr", "dar", "dar lag", "ghabrahat", "katl", "khoon",
+    "suraksha", "suraksha dijiye", "suraksha chahiye", "bachao", "madad", "madad karo", "khatra", "akela", "akeli",
+    "kill", "killing", "going to kill", "will kill", "threat", "threatened", "scared", "afraid", "panic", "bleeding",
+    "help", "protect", "protection", "knife", "gun", "weapon", "alone", "emergency", "police"
+]
+
+
+def extract_utterance_keywords(line: str, session_keywords: list) -> list:
+    """Extract all relevant distress keywords from utterance line, prioritizing specific phrases."""
+    line_lower = line.lower()
+    matched = []
+
+    # 1. Any session-level detected keywords that appear in this line
+    for kw in session_keywords:
+        if kw and kw.lower() in line_lower and kw not in matched:
+            matched.append(kw)
+
+    # 2. Check all common distress / alert terms
+    for kw in COMMON_ALERT_KEYWORDS:
+        if kw.lower() in line_lower:
+            is_sub = False
+            for idx, m in enumerate(matched):
+                if kw.lower() == m.lower():
+                    is_sub = True
+                    break
+                elif kw.lower() in m.lower():
+                    is_sub = True
+                    break
+                elif m.lower() in kw.lower():
+                    matched[idx] = kw
+                    is_sub = True
+                    break
+            if not is_sub and kw not in matched:
+                matched.append(kw)
+
+    # Deduplicate while preserving order
+    seen = set()
+    return [x for x in matched if not (x.lower() in seen or seen.add(x.lower()))]
+
+
 def _format_svi_state_as_case_record(state, meta: Optional[dict] = None) -> dict:
     import re
     meta = meta or {}
@@ -124,14 +175,15 @@ def _format_svi_state_as_case_record(state, meta: Optional[dict] = None) -> dict
     if raw_transcript.strip():
         lines = [s.strip() for s in re.split(r"[\n\.\?!]+", raw_transcript) if s.strip()]
         for idx, line in enumerate(lines):
-            is_flagged = any(kw.lower() in line.lower() for kw in detected_keywords)
+            flagged_kws = extract_utterance_keywords(line, detected_keywords)
+            is_flagged = len(flagged_kws) > 0 or any(kw.lower() in line.lower() for kw in detected_keywords)
             time_str = f"+0:{(idx + 1) * 4}s"
             transcript_utterances.append({
                 "time": time_str,
                 "speaker": "Caller",
                 "text": line,
                 "isFlagged": is_flagged,
-                "flaggedKeywords": [kw for kw in detected_keywords if kw.lower() in line.lower()],
+                "flaggedKeywords": flagged_kws,
             })
     else:
         transcript_utterances.append({
@@ -701,14 +753,15 @@ def _format_case_record(c: LiveCase) -> dict:
     if raw_transcript.strip():
         lines = [s.strip() for s in re.split(r"[\n\.\?!]+", raw_transcript) if s.strip()]
         for idx, line in enumerate(lines):
-            is_flagged = any(kw.lower() in line.lower() for kw in detected_keywords)
+            flagged_kws = extract_utterance_keywords(line, detected_keywords)
+            is_flagged = len(flagged_kws) > 0 or any(kw.lower() in line.lower() for kw in detected_keywords)
             time_str = f"+0:{(idx + 1) * 4}s"
             transcript_utterances.append({
                 "time": time_str,
                 "speaker": "Caller",
                 "text": line,
                 "isFlagged": is_flagged,
-                "flaggedKeywords": [kw for kw in detected_keywords if kw.lower() in line.lower()],
+                "flaggedKeywords": flagged_kws,
             })
     else:
         transcript_utterances.append({

@@ -77,6 +77,19 @@ export const CounsellorChatbot: React.FC<CounsellorChatbotProps> = ({
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isSending])
 
+// ── Direct Groq & OpenRouter Fallbacks ──────────────────────────────────
+const DIRECT_GROQ_KEY =
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_API_KEY) || ''
+
+const CLIENT_GROQ_MODELS = [
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || '',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'groq/compound-mini',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+].filter(Boolean) as string[]
+
 async function callDirectOpenRouterSuggestions(
   answers: Record<string, string>,
   language: string,
@@ -132,6 +145,46 @@ Generate a JSON response tailored strictly to what the citizen answered:
 }
 Return only valid JSON.`
 
+    // 1. Direct Groq suggestions if key configured
+    if (DIRECT_GROQ_KEY) {
+      for (const modelCandidate of CLIENT_GROQ_MODELS) {
+        try {
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${DIRECT_GROQ_KEY}`,
+            },
+            body: JSON.stringify({
+              model: modelCandidate,
+              messages: [{ role: 'user', content: prompt }],
+              response_format: { type: 'json_object' },
+              temperature: 0.3,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            const content = data?.choices?.[0]?.message?.content
+            if (content) {
+              const parsed = JSON.parse(content)
+              if (parsed.greeting && parsed.suggestions && parsed.suggestions.length > 0) {
+                return {
+                  greeting: parsed.greeting,
+                  identified_issues: parsed.identified_issues || [],
+                  counsellor_id: counsellorId,
+                  distress_level: distressLevel,
+                  suggestions: parsed.suggestions,
+                  recommended_prompts: parsed.recommended_prompts || [],
+                }
+              }
+            }
+          }
+        } catch (groqErr) {
+          console.warn(`Direct Groq suggestions failed for ${modelCandidate}:`, groqErr)
+        }
+      }
+    }
+
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -139,7 +192,7 @@ Return only valid JSON.`
         Authorization: `Bearer ${DIRECT_OPENROUTER_KEY}`,
       },
       body: JSON.stringify({
-        model: 'openai/gpt-4o-mini',
+        model: CLIENT_CANDIDATE_MODELS[0] || 'nex-agi/nex-n2.5-pro:free',
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },
         temperature: 0.3,
@@ -270,10 +323,15 @@ Return only valid JSON.`
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
 const DIRECT_OPENROUTER_KEY =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENROUTER_API_KEY) ||
-  (typeof atob !== 'undefined'
-    ? atob('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==')
-    : '')
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENROUTER_API_KEY) || ''
+
+const CLIENT_CANDIDATE_MODELS = [
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENROUTER_MODEL) || '',
+  'nex-agi/nex-n2.5-pro:free',
+  'nex-agi/nex-n2.5-mini:free',
+  'nvidia/nemotron-3.5-lightning:free',
+  'openai/gpt-4o-mini',
+].filter(Boolean) as string[]
 
 async function callDirectOpenRouter(
   history: { role: 'user' | 'assistant'; content: string }[],
@@ -288,35 +346,77 @@ async function callDirectOpenRouter(
         Object.entries(assessmentAnswers).map(([k, v]) => `- ${k}: "${v}"`).join('\n')
     }
 
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${DIRECT_OPENROUTER_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `You are Counsellor C-104 at India's National Helpline Against Atrocities (NHAA - 14566).
-Target Language: ${language === 'hi' ? 'Hindi (Devanagari)' : language === 'hinglish' ? 'Conversational Roman Hinglish' : 'Empathetic English'}.
-Speak empathetically in the citizen's language (reply in the exact language/mix they used or selected: ${language}).
-If they ask a question (whether general knowledge, about India like 'india ka pm kaun hai', legal protection under PoA Act, or emotional coping), answer directly, accurately, warmly, and helpfully.
+    const counsellorPrompt = `You are Counsellor C-104, an empathetic certified counselor & supportive AI companion at India's National Helpline Against Atrocities (NHAA - 14566).
+Like ChatGPT, answer all user questions accurately, engagingly, and empathetically with helpful practical guidance.
+Use friendly expressive emojis (🌟, 🤝, 🛡️, ✨, 💡, 🌙, 📋, 🙏, 💬) and natural gestures throughout your response.
+Target Language: ${language === 'hi' ? 'Hindi (Devanagari)' : language === 'hinglish' ? 'Conversational Roman Hinglish' : 'Empathetic English'}. Speak in the exact language/mix the user used (${language}).
+If they ask a question (such as how to get security from a Nodal Officer, sleep/stress relief tips, general knowledge, or PoA Act rights), answer thoroughly with clear bullet points.
 ${contextStr}
-Keep response concise (2-4 sentences), non-judgmental, and validating.`,
-          },
-          ...history,
-          { role: 'user', content: userText },
-        ],
-        max_tokens: 250,
-        temperature: 0.6,
-      }),
-    })
+Keep your tone warm, encouraging, non-judgmental, and validating. If they are in immediate danger, remind them of toll-free 14566 or 112.`
 
-    if (res.ok) {
-      const data = await res.json()
-      return data?.choices?.[0]?.message?.content?.trim() || null
+    // 1. Direct Groq chat completion if configured
+    if (DIRECT_GROQ_KEY) {
+      for (const modelCandidate of CLIENT_GROQ_MODELS) {
+        try {
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${DIRECT_GROQ_KEY}`,
+            },
+            body: JSON.stringify({
+              model: modelCandidate,
+              messages: [
+                { role: 'system', content: counsellorPrompt },
+                ...history,
+                { role: 'user', content: userText },
+              ],
+              max_tokens: 450,
+              temperature: 0.6,
+            }),
+          })
+          if (res.ok) {
+            const data = await res.json()
+            const content = data?.choices?.[0]?.message?.content?.trim()
+            if (content) return content
+          }
+        } catch (groqErr) {
+          console.warn(`Direct Groq chat failed for ${modelCandidate}:`, groqErr)
+        }
+      }
+    }
+
+    for (const modelCandidate of CLIENT_CANDIDATE_MODELS) {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${DIRECT_OPENROUTER_KEY}`,
+          },
+          body: JSON.stringify({
+            model: modelCandidate,
+            messages: [
+              {
+                role: 'system',
+                content: counsellorPrompt,
+              },
+              ...history,
+              { role: 'user', content: userText },
+            ],
+            max_tokens: 400,
+            temperature: 0.6,
+          }),
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          const content = data?.choices?.[0]?.message?.content?.trim()
+          if (content) return content
+        }
+      } catch (err) {
+        console.warn(`Direct OpenRouter failed for ${modelCandidate}:`, err)
+      }
     }
   } catch (e) {
     console.warn('Direct OpenRouter call error:', e)
@@ -373,7 +473,14 @@ Keep response concise (2-4 sentences), non-judgmental, and validating.`,
       }
 
       if (!replyText) {
-        replyText = 'I hear you and I am standing by your side. Aapki suraksha hamari prathmikta hai.'
+        const lower = text.toLowerCase()
+        if (lower.includes('nodal') || lower.includes('security') || lower.includes('suraksha') || lower.includes('police')) {
+          replyText = '🛡️ **Nodal Officer se Security:** Aap 14566 ya 112 par call karke turant Nodal Officer protection request kar sakte hain. District SP Office me written application dekar Zero-FIR aur police escort grant hoti hai. Hum aapke saath hain! 🤝🙏'
+        } else if (lower.includes('neend') || lower.includes('sleep') || lower.includes('tension') || lower.includes('stress')) {
+          replyText = '🌙✨ **Neend aur Tension ke liye:** Sone se 30-45 min pehle phone dur rakhein, 4-7-8 deep breathing karein, aur shaam ke baad chai/coffee na lein. Jo bhi baat dil me hai, yahan zaroor share karein 🌟.'
+        } else {
+          replyText = '🤝 Main aapki baat dhyan se sun raha hoon aur aapki suraksha hamari sarvochha prathmikta hai ✨. Kripya batayein, main is vishay me aapki kaise behtar madad kar sakta hoon? 🙏'
+        }
       }
 
       const counsellorReply: ChatMessage = {

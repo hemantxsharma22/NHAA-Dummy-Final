@@ -1,0 +1,27 @@
+name: nhaa_case_intelligence
+description: "NHAA AI Case Intelligence Platform - Citizen, Operator, Officer, and Admin App"
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.7.0
+  web_socket_channel: ^3.0.1
+  record: ^5.2.0
+  fl_chart: ^0.70.2
+  provider: ^6.1.2
+  intl: ^0.20.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

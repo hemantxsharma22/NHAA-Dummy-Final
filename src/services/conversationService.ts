@@ -69,11 +69,28 @@ export async function sendConversationMessage(
 
 // ── Counsellor chat ────────────────────────────────────────────────────────
 
+const DIRECT_GROQ_KEY =
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_API_KEY) || ''
+
+const CONV_GROQ_MODELS = [
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || '',
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
+  'groq/compound-mini',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+].filter(Boolean) as string[]
+
 const DIRECT_OPENROUTER_KEY =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENROUTER_API_KEY) ||
-  (typeof atob !== 'undefined'
-    ? atob('c2stb3ItdjEtOTlhYTg5ZDEyZDMzMTUzNzU1OWRkNjE4MGJkNmZmYWRmNWFiNWUwNDNlZTFjZmVmMzI2M2U2NDNmYzFiNjA1Mw==')
-    : '')
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENROUTER_API_KEY) || ''
+
+const CONV_CANDIDATE_MODELS = [
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENROUTER_MODEL) || '',
+  'nex-agi/nex-n2.5-pro:free',
+  'nex-agi/nex-n2.5-mini:free',
+  'nvidia/nemotron-3.5-lightning:free',
+  'openai/gpt-4o-mini',
+].filter(Boolean) as string[]
 
 export async function sendCounsellorMessage(
   userMessage: string,
@@ -102,38 +119,76 @@ export async function sendCounsellorMessage(
     console.warn('Backend /api/chat error in conversationService, trying direct OpenRouter:', err)
   }
 
-  // Direct OpenRouter AI fallback
-  try {
-    const directRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${DIRECT_OPENROUTER_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `You are Counsellor C-104 at India's National Helpline Against Atrocities (NHAA - 14566).
-Reply warmly, empathetically, and accurately in the user's language (English, Hindi, or Hinglish).
-If they ask a general question (like 'india ka pm kaun hai' or questions about India, rights, or law), answer it helpfully and clearly.
-Keep response concise (2-4 sentences).`,
+  const counsellorPrompt = `You are Counsellor C-104 & AI Companion at India's National Helpline (NHAA - 14566).
+Like ChatGPT, answer all user questions engagingly, empathetically, and comprehensively with practical guidance.
+Use friendly expressive emojis (🌟, 🤝, 🛡️, ✨, 💡, 🌙, 📋, 🙏) and natural gestures throughout your response.
+Speak warmly and accurately in the user's language (English, Hindi, or Hinglish).
+Provide clear bullet points and actionable advice for questions on security, rights, stress relief, or general inquiries.
+Keep tone encouraging, non-judgmental, and validating.`
+
+  // 1. Direct Groq AI fallback
+  if (DIRECT_GROQ_KEY) {
+    for (const modelCandidate of CONV_GROQ_MODELS) {
+      try {
+        const directRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${DIRECT_GROQ_KEY}`,
           },
-          ...history.map(t => ({ role: (t.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: t.content })),
-          { role: 'user', content: userMessage }
-        ],
-        max_tokens: 250,
-        temperature: 0.6,
-      }),
-    })
-    if (directRes.ok) {
-      const d = await directRes.json()
-      const text = d?.choices?.[0]?.message?.content?.trim()
-      if (text) return text
+          body: JSON.stringify({
+            model: modelCandidate,
+            messages: [
+              { role: 'system', content: counsellorPrompt },
+              ...history.map(t => ({ role: (t.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: t.content })),
+              { role: 'user', content: userMessage }
+            ],
+            max_tokens: 450,
+            temperature: 0.6,
+          }),
+        })
+        if (directRes.ok) {
+          const d = await directRes.json()
+          const text = d?.choices?.[0]?.message?.content?.trim()
+          if (text) return text
+        }
+      } catch (directErr) {
+        console.warn(`Direct Groq fallback failed for ${modelCandidate}:`, directErr)
+      }
     }
-  } catch (directErr) {
-    console.warn('Direct OpenRouter fallback failed:', directErr)
+  }
+
+  // 2. Direct OpenRouter AI fallback with candidate models
+  for (const modelCandidate of CONV_CANDIDATE_MODELS) {
+    try {
+      const directRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${DIRECT_OPENROUTER_KEY}`,
+        },
+        body: JSON.stringify({
+          model: modelCandidate,
+          messages: [
+            {
+              role: 'system',
+              content: counsellorPrompt,
+            },
+            ...history.map(t => ({ role: (t.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: t.content })),
+            { role: 'user', content: userMessage }
+          ],
+          max_tokens: 400,
+          temperature: 0.6,
+        }),
+      })
+      if (directRes.ok) {
+        const d = await directRes.json()
+        const text = d?.choices?.[0]?.message?.content?.trim()
+        if (text) return text
+      }
+    } catch (directErr) {
+      console.warn(`Direct OpenRouter fallback failed for ${modelCandidate}:`, directErr)
+    }
   }
 
   return localCounsellorFallback(userMessage)

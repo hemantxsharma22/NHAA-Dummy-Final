@@ -25,6 +25,21 @@ DEEPGRAM_WS_URL = "wss://api.deepgram.com/v1/listen"
 def get_deepgram_api_key() -> Optional[str]:
     """Read DEEPGRAM_API_KEY from environment. Never hardcoded."""
     key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
+    if key:
+        return key
+    # Fallback: reload from root or backend .env
+    try:
+        from pathlib import Path
+        from dotenv import load_dotenv
+        root_env = Path(__file__).resolve().parents[3] / ".env"
+        if root_env.exists():
+            load_dotenv(dotenv_path=root_env)
+        backend_env = Path(__file__).resolve().parents[2] / ".env"
+        if backend_env.exists():
+            load_dotenv(dotenv_path=backend_env)
+    except Exception:
+        pass
+    key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
     return key if key else None
 
 
@@ -41,6 +56,9 @@ def build_deepgram_ws_url(language: str = "hi-IN") -> str:
         "punctuate": "true",
         "interim_results": "true",
         "endpointing": "300",
+        "diarize": "true",
+        "utterance_end_ms": "1000",
+        "vad_events": "true",
     }
 
     if lang_clean in ("hi", "hi-in", "hindi"):
@@ -121,12 +139,26 @@ def parse_deepgram_response(raw_message: str) -> dict:
         is_final = data.get("is_final", False)
         speech_final = data.get("speech_final", False)
 
+        # Detect primary speaker ID from words
+        speaker_id = 0
+        if words:
+            speaker_counts = {}
+            for w in words:
+                spk = w.get("speaker", 0)
+                speaker_counts[spk] = speaker_counts.get(spk, 0) + 1
+            if speaker_counts:
+                speaker_id = max(speaker_counts.items(), key=lambda x: x[1])[0]
+
+        speaker_label = "Operator" if speaker_id == 1 else "Citizen"
+
         return {
             "type": "transcript",
             "is_final": is_final,
             "speech_final": speech_final,
             "transcript": transcript,
             "confidence": confidence,
+            "speaker": speaker_label,
+            "speaker_id": speaker_id,
             "words": words,
             "start": data.get("start", 0),
             "duration": data.get("duration", 0),

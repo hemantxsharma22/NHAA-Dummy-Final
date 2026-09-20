@@ -22,19 +22,17 @@
       "ui_label": "Threat / Intimidation",
       "weight": 38,
       "phrases": [
-        "धमकी", "धमकी दे रहा", "धमकी मिल रही", "धमकी दी", "मार देंगे", "मार देगा", "मार दूंगा", "मारूंगी", "जान से मार", "देख लूंगा", "खत्म कर दूंगा",
-        "dhamki", "dhamki mil rahi", "dhamki de raha", "dhamki di", "maar denge", "marunga", "marungi", "dekh lunga", "jaan se maarne",
-        "jaan se maar", "jaan se maar dunga", "khatam kar dunga", "dara raha", "warning di hai", "consequences bahut bure", "sabak sikha",
-        "threat", "threaten", "threatened", "threatening", "will kill me", "said he will kill", "will hurt me", "going to kill",
-        "threatened me", "threatened my family", "threatening call", "threatening message", "harm me", "regret it", "sent someone to threaten"
+        "धमकी", "धमकी दे रहा", "धमकी मिल रही", "धमकी दी", "धमका रहा", "मारने वाला", "मारने वाली", "मारने", "मारना", "मारने की धमकी", "मार देंगे", "मार देगा", "मार दूंगा", "मारूंगी", "मार डालेगा", "मार डालेंगे", "जान से मार", "जान से मारने", "जान ले लेगा", "जान ले लूंगा", "कत्ल", "कत्ल करने वाला", "कत्ल करने", "हत्या", "हत्या करने", "खून करने", "खून खराबा", "जिंदा नहीं छोड़ेगा", "जिंदा नहीं छोड़ेंगे", "बख्शेंगे नहीं", "सबक सिखाएंगे", "सबक सिखाऊंगा", "हमला", "हमला करने वाला", "देख लूंगा", "खत्म कर दूंगा",
+        "dhamki", "dhamki mil rahi", "dhamki de raha", "dhamki di", "dhamka raha", "marne wala", "marne wali", "marne", "marna", "marne ki dhamki", "maar denge", "maar dega", "marunga", "marungi", "maar dalega", "maar dalenge", "dekh lunga", "jaan se maarne", "jaan se maar", "jaan se maar dunga", "jaan le lega", "katl", "qatl", "hatya", "khoon karne", "khatam kar dunga", "dara raha", "warning di hai", "consequences bahut bure", "sabak sikha", "zinda nahi chhodega", "hamla", "hamla karne",
+        "threat", "threaten", "threatened", "threatening", "will kill me", "said he will kill", "will hurt me", "going to kill", "someone is going to kill", "kill me", "threatened me", "threatened my family", "threatening call", "threatening message", "harm me", "regret it", "sent someone to threaten", "murder"
       ]
     },
     "FEAR_DISTRESS_PANIC": {
       "ui_label": "Fear / Distress",
       "weight": 34,
       "phrases": [
-        "डर", "डर लग रहा", "बहुत डर", "घबराहट", "घबरा", "चीख", "पैनिक", "कांप रहा", "परेशान", "रो रहा", "चीखना",
-        "darr", "dar raha", "dar rahi", "bahut darr", "bohot darr", "dar lag raha", "darr lag raha", "ghabra", "ghabrahat", "pareshan",
+        "डर", "डर लग रहा", "बहुत डर", "बहुत डर लग रहा", "डरा हुआ", "डरी हुई", "घबराहट", "घबरा", "दहशत", "खौफ", "सहम", "सहमी हुई", "सहमा हुआ", "चीख", "पैनिक", "कांप रहा", "कांप रही", "परेशान", "रो रहा", "रो रही", "चीखना",
+        "darr", "dar raha", "dar rahi", "bahut darr", "bohot darr", "dar lag raha", "darr lag raha", "bahut dar lag raha", "ghabra", "ghabrahat", "pareshan", "khauf", "dahshat", "saham",
         "scared", "afraid", "terrified", "petrified", "panic", "panicking", "extremely scared", "frightened", "anxious", "anxiety",
         "shaking", "trembling", "overwhelmed", "helpless", "cannot calm down", "dont feel safe", "feel helpless"
       ]
@@ -43,18 +41,17 @@
       "ui_label": "Immediate Safety / Urgency",
       "weight": 45,
       "phrases": [
-        "बाहर है", "घर के बाहर", "दरवाजे के बाहर", "अंदर आ गया", "अंदर घुस गया", "अभी मेरे पास", "दरवाजे पर", "हथियार",
-        "bahar hai", "ghar ke bahar", "darwaze ke bahar", "aane wala hai", "aa raha hai", "andar aa gaya", "ghus aaya", "locked hoon",
-        "right now", "outside my house", "outside my door", "near my house", "at my doorstep", "immediate danger", "coming right now",
-        "he has a weapon", "attacking me right now", "situation dangerous", "someone is outside", "send police immediately"
+        "सुरक्षा", "सुरक्षा दीजिए", "सुरक्षा चाहिए", "सुरक्षा की जरूरत", "बचाओ", "बचा लो", "बचा लीजिए", "मदद", "मदद करो", "मदद कीजिए", "मदद चाहिए", "खतरा", "खतरे में हूं", "खतरे में", "जान खतरे में", "बाहर है", "घर के बाहर", "दरवाजे के बाहर", "दरवाजे पर", "दरवाजा तोड़ रहा", "अंदर आ गया", "अंदर घुस गया", "अभी मेरे पास", "हथियार", "चाकू", "तलवार", "पिस्तौल", "बंदूक", "लाठी",
+        "suraksha", "suraksha dijiye", "suraksha chahiye", "bachao", "bacha lo", "bacha lijiye", "madad", "madad karo", "madad chahiye", "khatra", "khatre mein", "khatre mein hoon", "bahar hai", "ghar ke bahar", "darwaze ke bahar", "darwaza tod raha", "aane wala hai", "aa raha hai", "andar aa gaya", "ghus aaya", "locked hoon", "chaku", "bandook", "weapon",
+        "protect me", "protection", "need protection", "give me protection", "save me", "save my life", "help me", "need help", "right now", "outside my house", "outside my door", "near my house", "at my doorstep", "immediate danger", "coming right now", "he has a weapon", "attacking me right now", "situation dangerous", "someone is outside", "send police immediately"
       ]
     },
     "SELF_HARM_CONCERN": {
       "ui_label": "Self-Harm Risk",
       "weight": 50,
       "phrases": [
-        "अपने आप को नुकसान", "खुद को नुकसान", "मर जाना चाहती", "मर जाना चाहता", "जीना नहीं चाहती", "जीना नहीं चाहता", "जान लेना",
-        "nuksan pahunchana", "mar jana chahiye", "jeena nahi chahti", "jeena nahi chahta", "mar jana chahta", "marna chahti", "apni jaan",
+        "अपने आप को नुकसान", "खुद को नुकसान", "मर जाना चाहती", "मर जाना चाहता", "जीना नहीं चाहती", "जीना नहीं चाहता", "जान लेना", "आत्महत्या", "फांसी",
+        "nuksan pahunchana", "mar jana chahiye", "jeena nahi chahti", "jeena nahi chahta", "mar jana chahta", "marna chahti", "apni jaan", "aatmhatya",
         "want to hurt myself", "don't want to live", "dont want to live", "want to kill myself", "want to die", "end my life", "no reason to live"
       ]
     },
@@ -62,9 +59,9 @@
       "ui_label": "Physical Violence",
       "weight": 40,
       "phrases": [
-        "मारा", "पीट रहा", "पीटा", "हमला किया", "खून निकल रहा", "चोट लगी", "घायल हूं", "चांटा", "धक्का दिया",
-        "maara", "usne mujhe maara", "peeta", "beat me", "hit me", "attacked me", "bleeding", "injured", "physically attacked",
-        "khoon aa raha", "chot lagi", "slapped me", "kicked me", "punched me", "body par injury"
+        "मारा", "पीट रहा", "पीटा", "मारपीट", "हमला किया", "खून", "खून निकल रहा", "खून बह रहा", "खून आ रहा", "चोट लगी", "घायल हूं", "जख्मी", "चांटा", "धक्का दिया", "चाकू मारा", "गला दबाया",
+        "maara", "usne mujhe maara", "peeta", "marpeet", "beat me", "hit me", "attacked me", "bleeding", "injured", "physically attacked",
+        "khoon", "khoon aa raha", "khoon nikal raha", "khoon beh raha", "chot lagi", "ghayal", "zakhmi", "slapped me", "kicked me", "punched me", "body par injury"
       ]
     },
     "SEXUAL_VIOLENCE_HARASSMENT": {
@@ -98,8 +95,8 @@
       "ui_label": "Isolation Signal",
       "weight": 28,
       "phrases": [
-        "अकेला", "अकेली", "कोई नहीं है", "मदद करने वाला कोई नहीं", "कोई सहारा नहीं",
-        "akela", "akeli", "alone", "bilkul akela", "bilkul akeli", "koi nahi", "ghar mein koi nahi",
+        "अकेला", "अकेली", "कोई नहीं है", "कोई साथ नहीं", "मदद करने वाला कोई नहीं", "कोई सहारा नहीं", "अकेले बंद हूं",
+        "akela", "akeli", "alone", "bilkul akela", "bilkul akeli", "koi nahi", "ghar mein koi nahi", "koi sath nahi",
         "nobody with me", "no one to help me", "completely alone", "have nobody", "nowhere to go"
       ]
     },
@@ -164,8 +161,8 @@
       "ui_label": "Request Police Emergency",
       "weight": 25,
       "phrases": [
-        "पुलिस भेजो", "पुलिस को बुलाओ", "पीसीआर वैन", "112 को अलर्ट",
-        "police bhejo", "send police", "dispatch police", "pcr van", "urgent police"
+        "सुरक्षा दीजिए", "सुरक्षा चाहिए", "सुरक्षा भेजो", "पुलिस भेजो", "पुलिस को बुलाओ", "पुलिस भेजिए", "पीसीआर वैन", "112 को अलर्ट", "112 भेजो", "मदद भेजो", "मदद चाहिए", "बचा लीजिए",
+        "suraksha dijiye", "suraksha bhejo", "suraksha chahiye", "police bhejo", "police ko bulao", "police bhejiye", "send police", "dispatch police", "pcr van", "urgent police", "need police protection", "madad bhejo"
       ]
     },
     "REQUEST_COUNSELLING_LEGAL_MEDICAL": {

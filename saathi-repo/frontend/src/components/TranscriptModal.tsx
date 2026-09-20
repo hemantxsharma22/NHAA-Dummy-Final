@@ -12,6 +12,40 @@ interface TranscriptModalProps {
   transcript: TranscriptUtterance[];
 }
 
+const CLIENT_FALLBACK_TERMS = [
+  "मारने वाला", "मारने वाली", "मारने", "मारना", "मार देंगे", "मार देगा", "मार दूंगा", "जान से मार",
+  "कत्ल", "हत्या", "खून", "धमकी", "धमका", "हमला", "डर", "घबराहट", "दहशत", "खौफ", "कांप",
+  "सुरक्षा", "सुरक्षा दीजिए", "सुरक्षा चाहिए", "बचाओ", "बचा लो", "मदद", "मदद करो", "खतरा",
+  "चाकू", "पिस्तौल", "बंदूक", "हथियार", "अकेला", "अकेली",
+  "marne wala", "marne", "marna", "maar denge", "dhamki", "darr", "dar", "ghabrahat", "katl", "khoon",
+  "suraksha", "suraksha dijiye", "suraksha chahiye", "bachao", "madad", "khatra", "akela", "akeli",
+  "kill", "killing", "going to kill", "threat", "threatened", "scared", "afraid", "panic", "bleeding",
+  "help", "protect", "protection", "knife", "gun", "alone", "police"
+];
+
+function getUtteranceKeywords(item: TranscriptUtterance): string[] {
+  if (item.flaggedKeywords && item.flaggedKeywords.length > 0) {
+    return item.flaggedKeywords;
+  }
+  if (!item.text) return [];
+  const lower = item.text.toLowerCase();
+  const matched: string[] = [];
+  for (const term of CLIENT_FALLBACK_TERMS) {
+    if (lower.includes(term.toLowerCase())) {
+      const isSub = matched.some(m => m.toLowerCase().includes(term.toLowerCase()) && m.toLowerCase() !== term.toLowerCase());
+      if (!isSub) {
+        for (let i = matched.length - 1; i >= 0; i--) {
+          if (term.toLowerCase().includes(matched[i].toLowerCase()) && term.toLowerCase() !== matched[i].toLowerCase()) {
+            matched.splice(i, 1);
+          }
+        }
+        matched.push(term);
+      }
+    }
+  }
+  return matched;
+}
+
 export function TranscriptModal({
   isOpen,
   onClose,
@@ -23,7 +57,7 @@ export function TranscriptModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="saathi-card w-full max-w-2xl max-h-[85vh] flex flex-col bg-[#FFFFFF] overflow-hidden">
+      <div className="saathi-card w-full max-w-2xl max-h-[85vh] flex flex-col bg-[#FFFFFF] rounded-xl shadow-xl overflow-hidden border border-slate-200">
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b border-[#E8EAEE]">
           <div className="flex items-center gap-2.5">
@@ -74,12 +108,15 @@ export function TranscriptModal({
             }
 
             const isCaller = item.speaker === "Caller";
+            const kws = getUtteranceKeywords(item);
+            const hasKeywords = kws.length > 0;
+            const hasBadges = hasKeywords || Boolean(item.toneMarker);
 
             return (
               <div
                 key={idx}
                 className={`p-3.5 rounded-xl border ${
-                  item.isFlagged
+                  item.isFlagged || hasKeywords
                     ? "bg-[#FBF1E1]/40 border-[#F5E2C4]"
                     : "bg-[#FFFFFF] border-[#E8EAEE]"
                 }`}
@@ -103,12 +140,12 @@ export function TranscriptModal({
                 </p>
 
                 {/* Keyphrase / Tone badges */}
-                {(item.flaggedKeywords || item.toneMarker) && (
+                {hasBadges && (
                   <div className="mt-2.5 pt-2 border-t border-[#E8EAEE] flex flex-wrap items-center gap-2 text-[11px]">
-                    {item.flaggedKeywords && (
+                    {hasKeywords && (
                       <div className="flex items-center gap-1.5">
                         <span className="text-[#8A8F98]">Keywords:</span>
-                        {item.flaggedKeywords.map((kw, i) => (
+                        {kws.map((kw, i) => (
                           <span
                             key={i}
                             className="px-1.5 py-0.5 rounded bg-[#FCEEEE] text-[#B23A3A] border border-[#F8D7D7] font-medium"

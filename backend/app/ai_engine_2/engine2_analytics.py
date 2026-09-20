@@ -134,16 +134,30 @@ def match_semantic_precedents(
 
     corpus = [transcript] + archive_texts
 
-    vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1, sublinear_tf=True)
+    vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1, sublinear_tf=True, stop_words="english")
     tfidf_matrix = vectorizer.fit_transform(corpus)
+    feature_names = vectorizer.get_feature_names_out()
 
     # Cosine similarities between query (row 0) and all archives (rows 1..N)
     similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+    query_vec = tfidf_matrix[0].toarray().flatten()
 
     matches = []
     for idx, raw_sim in enumerate(similarities):
         arch = HISTORICAL_PRECEDENT_ARCHIVES[idx]
         sim_percentage = float(raw_sim * 100.0)
+
+        # Extract top matching terms (highest element-wise product of TF-IDF weights)
+        doc_vec = tfidf_matrix[idx + 1].toarray().flatten()
+        term_overlap = query_vec * doc_vec
+        top_term_indices = np.argsort(term_overlap)[::-1]
+        matching_terms = [
+            feature_names[i]
+            for i in top_term_indices[:4]
+            if term_overlap[i] > 0
+        ]
+        if not matching_terms:
+            matching_terms = [arch["category"].lower().replace("_", " "), arch["district"].lower()]
 
         # Regional affinity boost
         if arch["district"].lower() in district.lower():
@@ -160,6 +174,8 @@ def match_semantic_precedents(
             "year": arch["year"],
             "category": arch["category"],
             "similarityScore": normalized_score,
+            "shortSummary": arch["transcript_summary"],
+            "matchingTerms": matching_terms,
             "resolution": arch["resolution"],
             "statutorySections": arch["statutory_sections"],
             "dispatchTimeMinutes": arch["dispatch_time_mins"],

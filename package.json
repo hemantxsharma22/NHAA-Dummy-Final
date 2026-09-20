@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "server": "tsx server/index.ts",
+    "backend": "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000",
     "build": "tsc -b && vite build",
     "start": "tsx server/index.ts",
     "lint": "oxlint",
