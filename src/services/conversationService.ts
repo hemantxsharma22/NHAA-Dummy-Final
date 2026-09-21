@@ -70,15 +70,17 @@ export async function sendConversationMessage(
 // ── Counsellor chat ────────────────────────────────────────────────────────
 
 const DIRECT_GROQ_KEY =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_API_KEY) || ''
+  (typeof import.meta !== 'undefined' &&
+    ((import.meta as any).env?.VITE_GROQ_API_KEY || (import.meta as any).env?.GROQ_API_KEY)) ||
+  ''
 
 const CONV_GROQ_MODELS = [
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || '',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
   'groq/compound-mini',
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
+  'groq/compound',
+  'qwen/qwen3.8-27b',
 ].filter(Boolean) as string[]
 
 const DIRECT_OPENROUTER_KEY =

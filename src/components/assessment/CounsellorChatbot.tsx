@@ -79,15 +79,17 @@ export const CounsellorChatbot: React.FC<CounsellorChatbotProps> = ({
 
 // ── Direct Groq & OpenRouter Fallbacks ──────────────────────────────────
 const DIRECT_GROQ_KEY =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_API_KEY) || ''
+  (typeof import.meta !== 'undefined' &&
+    ((import.meta as any).env?.VITE_GROQ_API_KEY || (import.meta as any).env?.GROQ_API_KEY)) ||
+  ''
 
 const CLIENT_GROQ_MODELS = [
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || '',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
   'groq/compound-mini',
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
+  'groq/compound',
+  'qwen/qwen3.8-27b',
 ].filter(Boolean) as string[]
 
 async function callDirectOpenRouterSuggestions(
@@ -473,8 +475,12 @@ Keep your tone warm, encouraging, non-judgmental, and validating. If they are in
       }
 
       if (!replyText) {
-        const lower = text.toLowerCase()
-        if (lower.includes('nodal') || lower.includes('security') || lower.includes('suraksha') || lower.includes('police')) {
+        const lower = text.toLowerCase().trim()
+        if (lower.includes('who are you') || lower.includes('kaun ho') || lower.includes('kya ho') || lower.includes('introduce')) {
+          replyText = 'Namaste! 🙏 Main Counsellor C-104 hoon. Main National Helpline Against Atrocities (NHAA - 14566) ka certified psychological support counselor hoon. Main yahan aapko legal safety under SC/ST PoA Act, emergency protection, aur stress/trauma se ubharne me madad karne ke liye hoon. Aap mujhse koi bhi sawaal bejhiijhak poochh sakte hain.'
+        } else if (lower === 'hi' || lower === 'hello' || lower === 'hey' || lower === 'namaste' || lower === 'pranam') {
+          replyText = 'Namaste! 🙏 Main Counsellor C-104 hoon, NHAA Helpline (14566) se. Aap bilkul surakshit jagah par hain. Kripya batayein, aaj main aapki kis tarah se madad kar sakta hoon?'
+        } else if (lower.includes('nodal') || lower.includes('security') || lower.includes('suraksha') || lower.includes('police')) {
           replyText = '🛡️ **Nodal Officer se Security:** Aap 14566 ya 112 par call karke turant Nodal Officer protection request kar sakte hain. District SP Office me written application dekar Zero-FIR aur police escort grant hoti hai. Hum aapke saath hain! 🤝🙏'
         } else if (lower.includes('neend') || lower.includes('sleep') || lower.includes('tension') || lower.includes('stress')) {
           replyText = '🌙✨ **Neend aur Tension ke liye:** Sone se 30-45 min pehle phone dur rakhein, 4-7-8 deep breathing karein, aur shaam ke baad chai/coffee na lein. Jo bhi baat dil me hai, yahan zaroor share karein 🌟.'

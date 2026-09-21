@@ -12,30 +12,6 @@
   ],
   "rewrites": [
     {
-      "source": "/api/chat",
-      "destination": "/api/chat"
-    },
-    {
-      "source": "/api/analyze",
-      "destination": "/api/analyze"
-    },
-    {
-      "source": "/api/health",
-      "destination": "/api/health"
-    },
-    {
-      "source": "/api/assessment/converse",
-      "destination": "/api/assessment/converse"
-    },
-    {
-      "source": "/api/counsellor/suggestions",
-      "destination": "/api/counsellor/suggestions"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/api/index"
-    },
-    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
