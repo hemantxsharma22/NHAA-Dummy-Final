@@ -36,18 +36,7 @@ An AI-assisted case intelligence and emergency decision-support platform enginee
 ### 7. Cases, Complaints & Analytics Router
 - [`backend/app/routers/cases.py`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/backend/app/routers/cases.py): Citizen complaint filing, anonymous case tracking, officer triage, admin analytics, and audit logs.
 
-### 8. Dedicated Flutter Client Application
-- [`flutter_app/pubspec.yaml`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/pubspec.yaml): Flutter project configuration.
-- [`flutter_app/lib/main.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/main.dart): Main app entrypoint with role switching.
-- [`flutter_app/lib/config/api_config.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/config/api_config.dart): REST and WebSocket URLs.
-- [`flutter_app/lib/services/api_service.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/services/api_service.dart): Dio HTTP client.
-- [`flutter_app/lib/services/voice_stream_service.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/services/voice_stream_service.dart): Microphone capture & WebSocket streaming.
-- [`flutter_app/lib/screens/operator_console_screen.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/screens/operator_console_screen.dart): Operator Console matching Requirement 13.
-- [`flutter_app/lib/screens/citizen_complaint_screen.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/screens/citizen_complaint_screen.dart): Grievance filing & anonymous tracking.
-- [`flutter_app/lib/screens/officer_dashboard_screen.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/screens/officer_dashboard_screen.dart): Officer triage & alerts.
-- [`flutter_app/lib/screens/admin_analytics_screen.dart`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/flutter_app/lib/screens/admin_analytics_screen.dart): Charts using `fl_chart`.
-
-### 9. Test Suites
+### 8. Test Suites
 - [`backend/test_nhaa_platform.py`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/backend/test_nhaa_platform.py): Automated test suite for all 9 modules.
 - [`backend/test_api_endpoints.py`](file:///c:/Users/yoges/Downloads/nhaa-final-main/nhaa-final-main/backend/test_api_endpoints.py): Automated test suite for REST endpoints and RBAC.
 
@@ -75,8 +64,7 @@ An AI-assisted case intelligence and emergency decision-support platform enginee
 - **Machine Learning**: Scikit-learn (RandomForestClassifier, TfidfVectorizer, Cosine Similarity), Joblib
 - **Generative AI**: Official Google GenAI SDK (`google-genai` directly)
 - **Authentication**: JWT (`pyjwt`), password hashing (`bcrypt`)
-- **Web Frontend**: React 19, Vite 8, TypeScript, Tailwind CSS v4, Lucide Icons
-- **Mobile Frontend**: Flutter 3.24+, Dart, Dio, Record, WebSocketChannel, fl_chart
+- **Web Frontend**: React 19, Vite 8, TypeScript, Tailwind CSS v4, Lucide Icons (100% Web Platform)
 
 ---
 
@@ -147,13 +135,6 @@ python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --re
 npm install
 npm run dev
 # Access portal at http://localhost:5173
-```
-
-### 3. Flutter Client App (Mobile / Desktop)
-```bash
-cd flutter_app
-flutter pub get
-flutter run
 ```
 
 ---

@@ -2,7 +2,7 @@
 Deepgram Real-Time STT & Multimodal Case Intelligence WebSocket Router.
 
 Architecture:
-  Client (Flutter / Web) Microphone Stream → FastAPI WebSocket Proxy → Deepgram WS
+  Client (Web) Microphone Stream → FastAPI WebSocket Proxy → Deepgram WS
   Deepgram Real-time Streaming STT (Nova-2 with Diarization & VAD events)
   ↓
   Audio Calibration & Acoustic Features (NumPy & Librosa)
