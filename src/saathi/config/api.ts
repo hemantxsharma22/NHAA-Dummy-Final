@@ -11,6 +11,18 @@ export const getApiBaseUrl = (): string => {
 
   // In browser, use relative base "" so Vite proxy or same-origin routing handles /api/* seamlessly
   if (typeof window !== 'undefined') {
+    if (
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1' &&
+      !(window as any).__saathiApiUrlWarned
+    ) {
+      (window as any).__saathiApiUrlWarned = true;
+      console.info(
+        '[SAATHI-AI] VITE_SAATHI_API_URL is not explicitly configured. Defaulting to relative origin (%s). ' +
+          'For decoupled backend on Render, set VITE_SAATHI_API_URL in your Vercel Environment Variables.',
+        window.location.origin
+      );
+    }
     return '';
   }
 

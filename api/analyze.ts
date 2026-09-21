@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { assessmentService } from '../server/assessmentService'
 
+process.env.GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim()
 process.env.OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim()
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

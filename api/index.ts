@@ -8,7 +8,15 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     (req.headers['x-forwarded-uri'] as string) ||
     req.originalUrl
 
-  if (actualUrl && typeof actualUrl === 'string' && (req.url === '/api' || req.url === '/api/' || req.url === '/api/index')) {
+  if (
+    actualUrl &&
+    typeof actualUrl === 'string' &&
+    (req.url === '/api' ||
+      req.url === '/api/' ||
+      req.url === '/api/index' ||
+      req.url.startsWith('/api/index?') ||
+      req.url.startsWith('/api/index/'))
+  ) {
     req.url = actualUrl
   }
 

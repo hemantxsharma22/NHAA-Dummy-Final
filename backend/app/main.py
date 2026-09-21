@@ -120,7 +120,7 @@ if allowed_origins_env and allowed_origins_env != "*":
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost:\d+|http://127\.0\.0\.1:\d+",
+        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -129,7 +129,7 @@ else:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost:\d+|http://127\.0\.0\.1:\d+",
+        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?",
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -162,6 +162,7 @@ def read_root():
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
     groq_configured = bool(os.environ.get("GROQ_API_KEY", ""))
     deepgram_configured = bool(os.environ.get("DEEPGRAM_API_KEY", ""))
