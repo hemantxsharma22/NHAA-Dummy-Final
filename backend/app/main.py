@@ -32,7 +32,8 @@ from app.routers.engine2 import router as engine2_router
 from app.routers.chat import router as chat_router
 from app.routers.auth import router as auth_router
 from app.routers.cases import router as cases_router
-from app.auth.security import hash_password
+from app.auth.rate_limiter import RateLimitMiddleware
+from app.auth.security import hash_password, normalize_role
 from app.ai_engine_2.engine2_analytics import HISTORICAL_PRECEDENT_ARCHIVES
 
 # Initialize all DB tables
@@ -57,26 +58,28 @@ with engine.connect() as conn:
 def _seed_initial_data():
     db = SessionLocal()
     try:
-        # Seed users if none exist
-        if db.query(User).count() == 0:
-            defaults = [
-                ("citizen", "citizen123", "Citizen", "Rajesh Kumar (Citizen)", "citizen@nhaa.gov.in"),
-                ("operator", "operator123", "Operator", "Priya Sharma (Operator 04)", "operator@nhaa.gov.in"),
-                ("officer", "officer123", "Officer", "Inspector Vikram Singh", "officer@nhaa.gov.in"),
-                ("admin", "admin123", "Admin", "NHAA System Administrator", "admin@nhaa.gov.in"),
-            ]
-            for uname, pword, role, fname, email in defaults:
+        defaults = [
+            ("citizen", "citizen123", "Citizen", "Rajesh Kumar (Citizen)", "citizen@nhaa.gov.in"),
+            ("operator", "operator123", "Operator", "Priya Sharma (Operator 04)", "operator@nhaa.gov.in"),
+            ("officer", "officer123", "Nodal Officer", "Inspector Vikram Singh", "officer@nhaa.gov.in"),
+            ("viewer", "viewer123", "Viewer", "Case Auditor / Analyst", "viewer@nhaa.gov.in"),
+            ("admin", "admin123", "Admin", "NHAA System Administrator", "admin@nhaa.gov.in"),
+        ]
+        for uname, pword, role, fname, email in defaults:
+            existing = db.query(User).filter(User.username == uname).first()
+            norm_role = normalize_role(role)
+            if not existing:
                 u = User(
                     username=uname,
                     hashed_password=hash_password(pword),
                     full_name=fname,
-                    role=role,
+                    role=norm_role,
                     email=email,
                 )
                 db.add(u)
                 db.commit()
                 db.refresh(u)
-                if role == "Officer":
+                if norm_role in ("Nodal Officer", "Officer"):
                     off = Officer(
                         user_id=u.id,
                         badge_number="NHAA-OFF-1001",
@@ -85,6 +88,9 @@ def _seed_initial_data():
                     )
                     db.add(off)
                     db.commit()
+            else:
+                existing.role = norm_role
+                db.commit()
 
         # Seed historical cases for TF-IDF matching if none exist
         if db.query(HistoricalCase).count() == 0:
@@ -110,10 +116,11 @@ _seed_initial_data()
 
 app = FastAPI(
     title="NHAA AI Case Intelligence Platform API",
-    description="Multimodal AI decision-support platform for Citizen, Operator, Officer, and Admin workflows (SIH26093)",
-    version="0.3.0",
+    description="Security-hardened multimodal AI decision-support platform for Citizen, Operator, Officer, and Admin workflows (SIH26093)",
+    version="0.4.0",
 )
 
+# ── CORS Allowlist Configuration ──────────────────────────────────────────────
 allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
 if allowed_origins_env and allowed_origins_env != "*":
     allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
@@ -126,14 +133,25 @@ if allowed_origins_env and allowed_origins_env != "*":
         allow_headers=["*"],
     )
 else:
+    # Secure default: restrict to localhost and verified cloud deployment patterns
+    safe_defaults = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=safe_defaults,
         allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?",
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# ── In-Memory Sliding-Window Rate Limiting Middleware ─────────────────────────
+app.add_middleware(RateLimitMiddleware)
 
 # Routers
 app.include_router(auth_router)
@@ -172,6 +190,13 @@ def health_check():
     return {
         "status": "healthy",
         "database": "sqlite_connected",
+        "security": {
+            "rbac_enabled": True,
+            "rate_limiting": "active_sliding_window",
+            "cors_protection": "allowlist_enforced",
+            "audit_trail": "sanitized_active",
+            "token_verification": ["JWT_HS256", "Firebase_RS256"],
+        },
         "services": {
             "groq_assistant": "configured" if groq_configured else "fallback_active",
             "deepgram_streaming_stt": "configured" if deepgram_configured else "missing_key",
@@ -183,7 +208,7 @@ def health_check():
             "historical_case_matching": "tfidf_cosine_active",
             "jwt_rbac": "active",
         },
-        "roles_supported": ["Citizen", "Operator", "Officer", "Admin"],
+        "roles_supported": ["Admin", "Nodal Officer", "Operator", "Viewer", "Citizen"],
     }
 
 

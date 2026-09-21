@@ -27,7 +27,14 @@ from app.models.nhaa_models import (
     RiskAssessment,
     AuditLog,
 )
-from app.auth.security import get_current_user, require_authenticated_user, require_role
+from app.auth.security import (
+    get_current_user,
+    require_authenticated_user,
+    require_role,
+    require_write_permission,
+    normalize_role,
+    sanitize_log_data,
+)
 from app.nlp_intelligence.spacy_extractor import extract_nlp_entities
 from app.nlp_intelligence.emotion_classifier import analyze_emotion
 from app.nlp_intelligence.case_indicators import extract_case_indicators
@@ -184,15 +191,24 @@ def submit_complaint(
     )
     db.add(risk_rec)
 
-    # 10. Audit Log
+    # 10. Audit Logs (Complaint filing and initial AI recommendation)
     audit = AuditLog(
         case_id=new_case.id,
         user_id=current_user.id if current_user else None,
-        user_role=current_user.role if current_user else "Citizen",
+        user_role=normalize_role(current_user.role if current_user else "Citizen"),
         action="COMPLAINT_FILED",
-        rationale=f"Complaint filed via {req.channel}. Anonymous: {req.is_anonymous}.",
+        rationale=sanitize_log_data(f"Complaint registered via {req.channel}. Anonymous: {req.is_anonymous}."),
     )
     db.add(audit)
+
+    ai_audit = AuditLog(
+        case_id=new_case.id,
+        user_id=None,
+        user_role="AI_Engine",
+        action="AI_RECOMMENDATION",
+        rationale=sanitize_log_data(f"Risk classified as {risk_res['risk_level']} (Score: {risk_res['risk_score']}). Action: {risk_res['recommended_action']}"),
+    )
+    db.add(ai_audit)
     db.commit()
 
     return {
@@ -245,7 +261,7 @@ def list_cases(
     status: Optional[str] = None,
     risk_level: Optional[str] = None,
     district: Optional[str] = None,
-    user: User = Depends(require_role(["Operator", "Officer", "Admin"])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Operator", "Viewer"])),
     db: Session = Depends(get_db),
 ):
     query = db.query(Case)
@@ -279,12 +295,23 @@ def list_cases(
 @router.get("/api/cases/{case_id}")
 def get_case_detail(
     case_id: str,
-    user: User = Depends(require_role(["Operator", "Officer", "Admin"])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Operator", "Viewer"])),
     db: Session = Depends(get_db),
 ):
     case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found.")
+
+    # Audit log for case access
+    access_audit = AuditLog(
+        case_id=case.id,
+        user_id=user.id,
+        user_role=normalize_role(user.role),
+        action="CASE_ACCESS",
+        rationale=sanitize_log_data(f"Case dossier viewed by {user.username} ({normalize_role(user.role)})"),
+    )
+    db.add(access_audit)
+    db.commit()
 
     # Fetch child records
     complaints = db.query(Complaint).filter(Complaint.case_id == case.id).all()
@@ -338,7 +365,12 @@ def get_case_detail(
             else None
         ),
         "audit_logs": [
-            {"action": a.action, "user_role": a.user_role, "rationale": a.rationale, "time": a.timestamp}
+            {
+                "action": a.action,
+                "user_role": a.user_role,
+                "rationale": sanitize_log_data(a.rationale),
+                "time": a.timestamp,
+            }
             for a in audits
         ],
     }
@@ -348,7 +380,8 @@ def get_case_detail(
 def triage_case(
     case_id: str,
     req: CaseTriageRequest,
-    user: User = Depends(require_role(["Operator", "Officer", "Admin"])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Operator"])),
+    _write_guard: User = Depends(require_write_permission()),
     db: Session = Depends(get_db),
 ):
     case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
@@ -356,6 +389,8 @@ def triage_case(
         raise HTTPException(status_code=404, detail="Case not found.")
 
     old_status = case.status
+    old_priority = case.priority
+
     if req.status:
         case.status = req.status
     if req.priority:
@@ -365,18 +400,42 @@ def triage_case(
 
     case.updated_at = datetime.utcnow()
 
-    # Log action in audit trail
+    # Determine audit action type: ESCALATION, OVERRIDE, or TRIAGE_UPDATE
+    notes_lower = (req.triage_notes or "").lower()
+    if "override" in notes_lower:
+        action_type = "OVERRIDE"
+    elif (
+        (req.priority in ("HIGH", "CRITICAL") and old_priority not in ("HIGH", "CRITICAL"))
+        or (req.priority == "CRITICAL" and old_priority != "CRITICAL")
+        or ("escalat" in notes_lower and "de-escalat" not in notes_lower)
+    ):
+        action_type = "ESCALATION"
+    elif req.status and req.status != old_status:
+        action_type = f"TRIAGE_UPDATE ({old_status} -> {case.status})"
+    else:
+        action_type = "CASE_UPDATE"
+
+    clean_rationale = sanitize_log_data(
+        req.triage_notes or f"Updated status to {case.status}, priority to {case.priority} by {user.full_name or user.username}"
+    )
+
     audit = AuditLog(
         case_id=case.id,
         user_id=user.id,
-        user_role=user.role,
-        action=f"TRIAGE_UPDATE ({old_status} -> {case.status})",
-        rationale=req.triage_notes or f"Updated priority to {case.priority} by {user.full_name or user.username}",
+        user_role=normalize_role(user.role),
+        action=action_type,
+        rationale=clean_rationale,
     )
     db.add(audit)
     db.commit()
 
-    return {"status": "success", "case_id": case.case_id, "new_status": case.status, "priority": case.priority}
+    return {
+        "status": "success",
+        "case_id": case.case_id,
+        "new_status": case.status,
+        "priority": case.priority,
+        "action_logged": action_type,
+    }
 
 
 # ==============================================================================
@@ -384,7 +443,7 @@ def triage_case(
 # ==============================================================================
 @router.get("/api/officer/dashboard")
 def get_officer_dashboard(
-    user: User = Depends(require_role(["Officer", "Admin"])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer"])),
     db: Session = Depends(get_db),
 ):
     total_open = db.query(Case).filter(Case.status == "OPEN").count()
@@ -433,7 +492,7 @@ def get_officer_dashboard(
 # ==============================================================================
 @router.get("/api/admin/analytics")
 def get_admin_analytics(
-    user: User = Depends(require_role(["Admin"])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer"])),
     db: Session = Depends(get_db),
 ):
     total_cases = db.query(Case).count()
@@ -485,7 +544,7 @@ def get_admin_analytics(
 @router.get("/api/audit-logs")
 def get_audit_trail(
     limit: int = 50,
-    user: User = Depends(require_role(["Officer", "Admin"])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer"])),
     db: Session = Depends(get_db),
 ):
     logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit).all()
@@ -495,7 +554,7 @@ def get_audit_trail(
             "case_id": l.case_id,
             "user_role": l.user_role,
             "action": l.action,
-            "rationale": l.rationale,
+            "rationale": sanitize_log_data(l.rationale),
             "timestamp": l.timestamp,
         }
         for l in logs
