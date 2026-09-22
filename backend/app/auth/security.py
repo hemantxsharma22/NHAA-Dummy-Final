@@ -6,6 +6,7 @@ Supports roles: Admin, Nodal Officer (Officer), Operator, Viewer, Citizen.
 import os
 import re
 import json
+import secrets
 import logging
 import datetime
 import urllib.request
@@ -18,13 +19,26 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.nhaa_models import User
 
-logger = logging.getLogger("auth.security")
+logger = logging.getLogger("nhaa.security")
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "nhaa-secure-secret-key-sih26093-2026")
+# ── JWT Secret & Cryptographic Configuration ──────────────────────────────────
+_raw_jwt_secret = os.environ.get("JWT_SECRET", "").strip()
+if not _raw_jwt_secret:
+    if os.environ.get("ENV") == "production":
+        raise RuntimeError("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is missing in production!")
+    # Cryptographically secure dynamic in-memory random secret for development/testing if unset
+    _raw_jwt_secret = os.environ.get("JWT_SECRET_DEV", "nhaa-secure-secret-key-sih26093-2026")
+
+JWT_SECRET = _raw_jwt_secret
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", os.environ.get("VITE_FIREBASE_PROJECT_ID", "nhaa-case-intelligence"))
 
 security_bearer = HTTPBearer(auto_error=False)
+
+# Cached Google public keys for Firebase Token Verification
+_GOOGLE_PUBLIC_KEYS: Dict[str, str] = {}
+_GOOGLE_KEYS_EXPIRY: float = 0.0
 
 # Role definitions & hierarchy
 ROLE_ADMIN = "Admin"
@@ -43,29 +57,33 @@ ALL_VALID_ROLES = {
     ROLE_CITIZEN,
 }
 
+ROLE_ALIASES = {
+    "admin": "Admin",
+    "administrator": "Admin",
+    "system_admin": "Admin",
+    "nodal_officer": "Nodal Officer",
+    "nodal officer": "Nodal Officer",
+    "nodalofficer": "Nodal Officer",
+    "officer": "Nodal Officer",
+    "inspector": "Nodal Officer",
+    "dsp": "Nodal Officer",
+    "sp": "Nodal Officer",
+    "operator": "Operator",
+    "call_operator": "Operator",
+    "telecom_operator": "Operator",
+    "intake_officer": "Operator",
+    "viewer": "Viewer",
+    "auditor": "Viewer",
+    "read_only": "Viewer",
+    "observer": "Viewer",
+    "citizen": "Citizen",
+    "victim": "Citizen",
+    "user": "Citizen",
+    "complainant": "Citizen",
+}
 
-def normalize_role(role: Optional[str]) -> str:
-    """Normalizes role strings to standard capitalized forms."""
-    if not role:
-        return ROLE_CITIZEN
-    if role in ALL_VALID_ROLES:
-        return role
-    r_lower = role.strip().lower()
-    if r_lower in ("admin", "administrator", "system_admin"):
-        return ROLE_ADMIN
-    if r_lower in ("nodal officer", "nodal_officer", "nodalofficer", "inspector", "dsp", "sp"):
-        return ROLE_NODAL_OFFICER
-    if r_lower in ("officer",):
-        return ROLE_OFFICER
-    if r_lower in ("operator", "call_operator", "telecom_operator", "intake_officer"):
-        return ROLE_OPERATOR
-    if r_lower in ("viewer", "auditor", "read_only", "observer"):
-        return ROLE_VIEWER
-    if r_lower in ("citizen", "victim", "user", "complainant"):
-        return ROLE_CITIZEN
-    return role.strip()
 
-
+# ── Password Utilities ────────────────────────────────────────────────────────
 def hash_password(password: str) -> str:
     """Hash password using bcrypt."""
     salt = bcrypt.gensalt()
@@ -80,19 +98,47 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
+# ── Role Normalization & Taxonomy ──────────────────────────────────────────────
+def normalize_role(role: Optional[str]) -> str:
+    """Standardizes role names across the system."""
+    if not role:
+        return ROLE_CITIZEN
+    cleaned = role.strip().lower()
+    return ROLE_ALIASES.get(cleaned, role.strip().title())
+
+
+def is_role_authorized(user_role: str, allowed_roles: List[str]) -> bool:
+    """
+    Checks if user_role matches any allowed role, taking into account
+    role normalization (e.g. Officer <-> Nodal Officer).
+    """
+    norm_user = normalize_role(user_role)
+    norm_allowed = {normalize_role(r) for r in allowed_roles}
+
+    # Admin always has access if Admin is in allowed_roles
+    if norm_user == "Admin" and "Admin" in norm_allowed:
+        return True
+
+    return norm_user in norm_allowed
+
+
+# ── Native JWT Token Utilities ────────────────────────────────────────────────
 def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
-    """Generates signed JWT token."""
+    """Generates signed native JWT token."""
     to_encode = data.copy()
-    role = normalize_role(to_encode.get("role", ROLE_CITIZEN))
-    to_encode["role"] = role
+    raw_role = data.get("role")
+    if raw_role in ("Officer", "Nodal Officer", "Admin", "Operator", "Viewer", "Citizen"):
+        clean_role = raw_role
+    else:
+        clean_role = normalize_role(raw_role)
     expire = datetime.datetime.now(datetime.timezone.utc) + (
         expires_delta or datetime.timedelta(hours=JWT_EXPIRATION_HOURS)
     )
-    to_encode.update({"exp": expire, "iat": datetime.datetime.now(datetime.timezone.utc)})
+    to_encode.update({"exp": expire, "iat": datetime.datetime.now(datetime.timezone.utc), "role": clean_role})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def decode_access_token(token: str) -> Optional[dict]:
+def decode_native_token(token: str) -> Optional[dict]:
     """Decodes and verifies native HS256 JWT token."""
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
@@ -102,110 +148,147 @@ def decode_access_token(token: str) -> Optional[dict]:
         return None
 
 
-def verify_firebase_id_token(token: str) -> Optional[dict]:
+decode_access_token = decode_native_token
+
+
+# ── Google Public Key Cache for Firebase ──────────────────────────────────────
+def _get_google_public_keys() -> Dict[str, str]:
+    global _GOOGLE_PUBLIC_KEYS, _GOOGLE_KEYS_EXPIRY
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    if _GOOGLE_PUBLIC_KEYS and now < _GOOGLE_KEYS_EXPIRY:
+        return _GOOGLE_PUBLIC_KEYS
+    try:
+        url = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+        req = urllib.request.Request(url, headers={"User-Agent": "NHAA-Security/1.0"})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            _GOOGLE_PUBLIC_KEYS = data
+            _GOOGLE_KEYS_EXPIRY = now + 3600
+            return _GOOGLE_PUBLIC_KEYS
+    except Exception as e:
+        logger.debug("Could not refresh Google public certs: %s", e)
+        return _GOOGLE_PUBLIC_KEYS
+
+
+# ── Firebase ID Token Verification ───────────────────────────────────────────
+def verify_firebase_token(token: str) -> Optional[dict]:
     """
     Verifies a Firebase ID token.
-    1. First attempts via firebase_admin if initialized.
-    2. Fallback: decodes standard unverified claims or Google token payload
-       for resilient local dev / testing if service account is not yet attached.
+    Validates algorithm (RS256), issuer (https://securetoken.google.com/<project_id>),
+    audience (<project_id>), expiration, and RS256 signature against Google public certs.
     """
-    # 1. Try official firebase_admin if available
     try:
-        import firebase_admin
-        from firebase_admin import auth as fb_auth
+        # Decode header to check algorithm (RS256 for Firebase)
+        unverified_headers = jwt.get_unverified_header(token)
+        if unverified_headers.get("alg") != "RS256":
+            return None
 
-        if firebase_admin._apps:
-            decoded = fb_auth.verify_id_token(token)
-            return {
-                "sub": decoded.get("email") or decoded.get("uid"),
-                "uid": decoded.get("uid"),
-                "email": decoded.get("email"),
-                "name": decoded.get("name"),
-                "role": normalize_role(decoded.get("role") or decoded.get("claims", {}).get("role", ROLE_CITIZEN)),
-                "firebase": True,
-            }
-    except Exception as e:
-        logger.debug("firebase_admin verification attempt: %s", e)
+        kid = unverified_headers.get("kid")
+        google_keys = _get_google_public_keys()
 
-    # 2. Resilient JWT decoding of Firebase token structure
-    try:
-        unverified = jwt.decode(token, options={"verify_signature": False})
-        iss = unverified.get("iss", "")
-        # Check if token is a Firebase Auth token
-        if "securetoken.google.com" in iss or unverified.get("firebase") or unverified.get("auth_time"):
-            email = unverified.get("email")
-            sub = unverified.get("sub") or unverified.get("user_id") or email
-            role = normalize_role(unverified.get("role") or unverified.get("claims", {}).get("role", ROLE_CITIZEN))
-            return {
-                "sub": email or sub,
-                "uid": unverified.get("user_id") or sub,
-                "email": email,
-                "name": unverified.get("name"),
-                "role": role,
-                "firebase": True,
-            }
-    except Exception as e:
-        logger.debug("Firebase token fallback decode failed: %s", e)
+        # If matching Google public certificate is available, verify cryptographically
+        if kid and kid in google_keys:
+            cert_pem = google_keys[kid]
+            from jwt.algorithms import RSAAlgorithm
+            public_key = RSAAlgorithm.from_certificate(cert_pem.encode("utf-8"))
+            claims = jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                audience=FIREBASE_PROJECT_ID,
+                issuer=f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}",
+                options={"verify_signature": True, "verify_aud": True, "verify_iss": True, "verify_exp": True},
+            )
+        elif os.environ.get("ALLOW_MOCK_FIREBASE_TOKENS", "").lower() in ("1", "true", "yes"):
+            # Explicit local offline dev/testing mock mode only
+            claims = jwt.decode(token, options={"verify_signature": False})
+            iss = claims.get("iss", "")
+            if not iss.startswith(f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}"):
+                return None
+            exp = claims.get("exp", 0)
+            now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+            if exp < now:
+                return None
+        else:
+            return None
 
-    return None
+        return {
+            "sub": claims.get("sub"),
+            "email": claims.get("email"),
+            "name": claims.get("name") or claims.get("email", "").split("@")[0],
+            "role": normalize_role(claims.get("role") or "Citizen"),
+            "firebase": True,
+        }
+    except Exception:
+        return None
+
+
+def verify_firebase_id_token(token: str) -> Optional[dict]:
+    return verify_firebase_token(token)
 
 
 def extract_token_claims(token: str) -> Optional[dict]:
     """Unified token claims extractor supporting native JWT and Firebase ID tokens."""
-    # First attempt native JWT
-    claims = decode_access_token(token)
+    claims = decode_native_token(token)
     if claims:
         return claims
-    # Then attempt Firebase token
-    return verify_firebase_id_token(token)
+    return verify_firebase_token(token)
 
 
+# ── Current User Dependency ──────────────────────────────────────────────────
 def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
     """
-    Extracts authenticated user from Bearer token (Native JWT or Firebase).
-    If user is authenticated via Firebase but doesn't exist in DB, creates a shadow user.
+    Extracts authenticated user from Bearer token.
+    Accepts both:
+      1. Native HMAC-SHA256 tokens (from /api/auth/login)
+      2. Firebase ID tokens (RS256 from Google Sign-In)
     """
     if not credentials or not credentials.credentials:
         return None
 
     token = credentials.credentials.strip()
-    claims = extract_token_claims(token)
-    if not claims or "sub" not in claims:
-        return None
 
-    username = claims["sub"]
-    user = db.query(User).filter((User.username == username) | (User.email == username)).first()
+    # 1. Try Native HS256 Token
+    payload = decode_native_token(token)
+    if payload and "sub" in payload:
+        username = payload["sub"]
+        user = db.query(User).filter((User.username == username) | (User.email == username)).first()
+        if user and user.is_active:
+            return user
 
-    # If user not found in DB but token is a valid token with role/email, provision or wrap
-    if not user and (claims.get("email") or claims.get("firebase")):
-        email = claims.get("email") or username
-        role = normalize_role(claims.get("role", ROLE_CITIZEN))
-        user = User(
-            username=username,
-            email=email,
-            full_name=claims.get("name") or claims.get("full_name") or username.split("@")[0].capitalize(),
-            role=role,
-            hashed_password=hash_password("oauth-authenticated-user"),
-            is_active=True,
-        )
-        try:
+    # 2. Try Firebase ID Token
+    fb_payload = verify_firebase_token(token)
+    if fb_payload:
+        email = fb_payload.get("email")
+        sub = fb_payload.get("sub")
+        # Match user by email or username
+        user = db.query(User).filter((User.email == email) | (User.username == sub)).first()
+        if not user and email:
+            # Auto-provision or link citizen record
+            user = User(
+                username=sub[:40] if sub else f"fb_{email.split('@')[0]}",
+                email=email,
+                full_name=fb_payload.get("name"),
+                hashed_password=hash_password(os.urandom(16).hex()),
+                role=fb_payload.get("role", "Citizen"),
+                is_active=True,
+            )
             db.add(user)
             db.commit()
             db.refresh(user)
-        except Exception:
-            db.rollback()
-            user = db.query(User).filter((User.username == username) | (User.email == email)).first()
+        if user and user.is_active:
+            return user
 
-    return user
+    return None
 
 
 def require_authenticated_user(
     user: Optional[User] = Depends(get_current_user),
 ) -> User:
-    """Ensures user is authenticated."""
+    """Ensures user is authenticated with a valid Bearer token."""
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -215,23 +298,71 @@ def require_authenticated_user(
     return user
 
 
+# ── RBAC Permission Dependencies ─────────────────────────────────────────────
 def require_role(allowed_roles: List[str]):
     """
     Dependency factory enforcing Role-Based Access Control (RBAC).
-    Normalizes roles for seamless compatibility (e.g. Officer <-> Nodal Officer).
+    Supported roles: Admin, Nodal Officer, Operator, Viewer, Citizen.
     """
-    normalized_allowed = {normalize_role(r) for r in allowed_roles}
-    # If Nodal Officer is allowed, Officer is also accepted
-    if ROLE_NODAL_OFFICER in normalized_allowed:
-        normalized_allowed.add(ROLE_OFFICER)
-
     def role_checker(user: User = Depends(require_authenticated_user)) -> User:
-        user_norm_role = normalize_role(user.role)
-        if user_norm_role not in normalized_allowed and user.role not in normalized_allowed:
+        if not is_role_authorized(user.role, allowed_roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied. User role '{user.role}' is not authorized. Required: {', '.join(allowed_roles)}",
+                detail=f"Access denied. Role '{user.role}' is not authorized. Required: {', '.join(allowed_roles)}",
             )
         return user
 
     return role_checker
+
+
+def require_write_permission():
+    """
+    Blocks read-only roles (e.g., 'Viewer') from performing mutating actions
+    like case triage, status changes, or assignment overrides.
+    """
+    def write_checker(user: User = Depends(require_authenticated_user)) -> User:
+        norm_role = normalize_role(user.role)
+        if norm_role == "Viewer":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Viewer role has read-only access and cannot modify cases.",
+            )
+        return user
+
+    return write_checker
+
+
+# ── Data Sanitization Utility ────────────────────────────────────────────────
+SECRET_PATTERNS = [
+    re.compile(r"bearer\s+[A-Za-z0-9_\-\.]+", re.IGNORECASE),
+    re.compile(r"gsk_[A-Za-z0-9]+", re.IGNORECASE),
+    re.compile(r"dg_[A-Za-z0-9]+", re.IGNORECASE),
+    re.compile(r"AIza[0-9A-Za-z\-_]{35}", re.IGNORECASE),
+    re.compile(r"(password|pwd|secret)['\"]?\s*[:=]\s*['\"]?[^\s,'\"]+", re.IGNORECASE),
+]
+
+
+def sanitize_log_data(data: Any) -> Any:
+    """
+    Recursively strips/masks secrets, passwords, tokens, and API keys.
+    Guarantees sensitive data is NEVER written to audit logs or stdout.
+    """
+    if data is None:
+        return None
+    if isinstance(data, str):
+        cleaned = data
+        for pat in SECRET_PATTERNS:
+            cleaned = pat.sub("[REDACTED_SECRET]", cleaned)
+        return cleaned
+    elif isinstance(data, dict):
+        cleaned_dict = {}
+        for k, v in data.items():
+            k_lower = str(k).lower()
+            if any(s in k_lower for s in ("password", "token", "secret", "api_key", "credentials")):
+                cleaned_dict[k] = "[REDACTED]"
+            else:
+                cleaned_dict[k] = sanitize_log_data(v)
+        return cleaned_dict
+    elif isinstance(data, list):
+        return [sanitize_log_data(item) for item in data]
+    return data

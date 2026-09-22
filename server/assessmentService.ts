@@ -213,9 +213,10 @@ export class AssessmentService {
     const lower = text.toLowerCase()
 
     let hinglishScore = 0
-    hinglishMarkers.forEach(m => {
-      if (new RegExp(`\\b${m}\\b`, 'i').test(lower)) hinglishScore++
-    })
+    const words = new Set(lower.match(/[a-z0-9]+/g) || [])
+    for (const marker of hinglishMarkers) {
+      if (words.has(marker)) hinglishScore++
+    }
 
     if (hasDevanagari && hinglishScore > 0) return { language: 'MIXED', confidence: 0.9 }
     if (hasDevanagari) return { language: 'HINDI', confidence: 0.95 }

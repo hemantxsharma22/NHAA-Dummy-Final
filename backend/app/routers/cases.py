@@ -31,6 +31,9 @@ from app.auth.security import (
     get_current_user,
     require_authenticated_user,
     require_role,
+    require_write_permission,
+    normalize_role,
+    sanitize_log_data,
     ROLE_ADMIN,
     ROLE_NODAL_OFFICER,
     ROLE_OFFICER,
@@ -224,6 +227,7 @@ def submit_complaint(
         rationale=f"Complaint registered via channel '{req.channel}'. Category: {new_case.category}. Risk: {risk_res['risk_level']}.",
         case_id=new_case.id,
         user=current_user,
+        user_role=normalize_role(current_user.role if current_user else "Citizen"),
         ip_address=request.client.host if request.client else None,
     )
 
@@ -287,7 +291,7 @@ def list_cases(
     status: Optional[str] = None,
     risk_level: Optional[str] = None,
     district: Optional[str] = None,
-    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN, ROLE_VIEWER])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Operator", "Viewer"])),
     db: Session = Depends(get_db),
 ):
     query = db.query(Case)
@@ -322,19 +326,19 @@ def list_cases(
 def get_case_detail(
     case_id: str,
     request: Request,
-    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN, ROLE_VIEWER])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Operator", "Viewer"])),
     db: Session = Depends(get_db),
 ):
     case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found.")
 
-    # Audit log for case access by authorized personnel
+    # Audit log for case access
     log_case_access(
         db=db,
         case_id=case.id,
         user=user,
-        rationale=f"Case {case.case_id} viewed by {user.username} (Role: {user.role}).",
+        rationale=f"Case dossier viewed by {user.username} ({normalize_role(user.role)})",
         ip_address=request.client.host if request.client else None,
     )
 
@@ -390,7 +394,12 @@ def get_case_detail(
             else None
         ),
         "audit_logs": [
-            {"action": a.action, "user_role": a.user_role, "rationale": a.rationale, "timestamp": a.timestamp}
+            {
+                "action": a.action,
+                "user_role": a.user_role,
+                "rationale": sanitize_log_data(a.rationale),
+                "timestamp": a.timestamp,
+            }
             for a in audits
         ],
     }
@@ -401,7 +410,8 @@ def triage_case(
     case_id: str,
     req: CaseTriageRequest,
     request: Request,
-    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Operator"])),
+    _write_guard: User = Depends(require_write_permission()),
     db: Session = Depends(get_db),
 ):
     case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
@@ -409,6 +419,8 @@ def triage_case(
         raise HTTPException(status_code=404, detail="Case not found.")
 
     old_status = case.status
+    old_priority = case.priority
+
     if req.status:
         case.status = req.status
     if req.priority:
@@ -417,21 +429,43 @@ def triage_case(
         case.assigned_officer_id = req.assigned_officer_id
 
     case.updated_at = datetime.utcnow()
-    db.commit()
 
-    # Log action in sanitized audit trail
-    log_case_update(
-        db=db,
-        case_id=case.id,
-        user=user,
-        old_status=old_status,
-        new_status=case.status,
-        priority=case.priority,
-        notes=req.triage_notes,
-        ip_address=request.client.host if request.client else None,
+    # Determine audit action type: ESCALATION, OVERRIDE, or TRIAGE_UPDATE
+    notes_lower = (req.triage_notes or "").lower()
+    if "override" in notes_lower:
+        action_type = "OVERRIDE"
+    elif (
+        (req.priority in ("HIGH", "CRITICAL") and old_priority not in ("HIGH", "CRITICAL"))
+        or (req.priority == "CRITICAL" and old_priority != "CRITICAL")
+        or ("escalat" in notes_lower and "de-escalat" not in notes_lower)
+    ):
+        action_type = "ESCALATION"
+    elif req.status and req.status != old_status:
+        action_type = f"TRIAGE_UPDATE ({old_status} -> {case.status})"
+    else:
+        action_type = "CASE_UPDATE"
+
+    clean_rationale = sanitize_log_data(
+        req.triage_notes or f"Updated status to {case.status}, priority to {case.priority} by {user.full_name or user.username}"
     )
 
-    return {"status": "success", "case_id": case.case_id, "new_status": case.status, "priority": case.priority}
+    record_audit_log(
+        db=db,
+        action=action_type,
+        rationale=clean_rationale,
+        case_id=case.id,
+        user=user,
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+
+    return {
+        "status": "success",
+        "case_id": case.case_id,
+        "new_status": case.status,
+        "priority": case.priority,
+        "action_logged": action_type,
+    }
 
 
 # ==============================================================================
@@ -443,6 +477,7 @@ def override_ai_recommendation(
     req: AIOverrideRequest,
     request: Request,
     user: User = Depends(require_role([ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
+    _write_guard: User = Depends(require_write_permission()),
     db: Session = Depends(get_db),
 ):
     """
@@ -479,6 +514,7 @@ def override_ai_recommendation(
         "case_id": case.case_id,
         "risk_level": case.risk_level,
         "priority": case.priority,
+        "action_logged": "OVERRIDE",
         "overridden_by": user.full_name or user.username,
         "message": "AI recommendation successfully overridden and recorded in non-repudiable audit trail.",
     }
@@ -493,6 +529,7 @@ def escalate_case(
     req: CaseEscalationRequest,
     request: Request,
     user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
+    _write_guard: User = Depends(require_write_permission()),
     db: Session = Depends(get_db),
 ):
     """
@@ -523,6 +560,7 @@ def escalate_case(
         "case_id": case.case_id,
         "priority": "CRITICAL",
         "status_label": case.status,
+        "action_logged": "ESCALATION",
         "message": f"Case escalated to {req.escalation_tier}. Immediate dispatch trigger active.",
     }
 
@@ -532,7 +570,7 @@ def escalate_case(
 # ==============================================================================
 @router.get("/api/officer/dashboard")
 def get_officer_dashboard(
-    user: User = Depends(require_role([ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer"])),
     db: Session = Depends(get_db),
 ):
     total_open = db.query(Case).filter(Case.status == "OPEN").count()
@@ -581,7 +619,7 @@ def get_officer_dashboard(
 # ==============================================================================
 @router.get("/api/admin/analytics")
 def get_admin_analytics(
-    user: User = Depends(require_role([ROLE_ADMIN, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_VIEWER])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer"])),
     db: Session = Depends(get_db),
 ):
     total_cases = db.query(Case).count()
@@ -633,7 +671,7 @@ def get_audit_trail(
     limit: int = 50,
     case_id: Optional[int] = None,
     action: Optional[str] = None,
-    user: User = Depends(require_role([ROLE_ADMIN, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_VIEWER])),
+    user: User = Depends(require_role(["Admin", "Nodal Officer", "Officer", "Viewer"])),
     db: Session = Depends(get_db),
 ):
     query = db.query(AuditLog)
@@ -649,8 +687,7 @@ def get_audit_trail(
             "case_id": l.case_id,
             "user_role": l.user_role,
             "action": l.action,
-            "rationale": l.rationale,
-            "ip_address": l.ip_address,
+            "rationale": sanitize_log_data(l.rationale),
             "timestamp": l.timestamp,
         }
         for l in logs

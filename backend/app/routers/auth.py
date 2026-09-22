@@ -1,6 +1,6 @@
 """
 Authentication API Router with Dual Token Verification & RBAC.
-Handles Registration, Login, Token generation, Firebase verification, and Default User seeding.
+Handles Registration, Login, Firebase Token Verification, Token generation, and Demo User seeding.
 """
 
 from typing import Optional
@@ -14,6 +14,7 @@ from app.auth.security import (
     hash_password,
     verify_password,
     create_access_token,
+    verify_firebase_token,
     extract_token_claims,
     normalize_role,
     get_current_user,
@@ -35,12 +36,16 @@ class RegisterRequest(BaseModel):
     password: str
     email: Optional[str] = None
     full_name: Optional[str] = None
-    role: Optional[str] = "Citizen"  # Citizen, Operator, Nodal Officer, Admin, Viewer
+    role: Optional[str] = "Citizen"  # Admin, Nodal Officer, Operator, Viewer, Citizen
 
 
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class FirebaseVerifyRequest(BaseModel):
+    id_token: str
 
 
 class VerifyTokenRequest(BaseModel):
@@ -81,7 +86,7 @@ def register_user(req: RegisterRequest, request: Request, db: Session = Depends(
     db.refresh(new_user)
 
     # If role is Nodal Officer / Officer, create Officer profile record
-    if role in (ROLE_NODAL_OFFICER, "Officer"):
+    if role in ("Nodal Officer", "Officer"):
         officer = Officer(
             user_id=new_user.id,
             badge_number=f"NHAA-OFF-{new_user.id:04d}",
@@ -128,7 +133,8 @@ def login_user(req: LoginRequest, request: Request, db: Session = Depends(get_db
             detail="Invalid credentials. Please verify username and password.",
         )
 
-    token = create_access_token({"sub": user.username, "role": user.role, "id": user.id})
+    norm_role = normalize_role(user.role)
+    token = create_access_token({"sub": user.username, "role": norm_role, "id": user.id})
 
     # Record successful login
     record_audit_log(
@@ -141,7 +147,49 @@ def login_user(req: LoginRequest, request: Request, db: Session = Depends(get_db
 
     return TokenResponse(
         access_token=token,
-        role=user.role,
+        role=norm_role,
+        username=user.username,
+        user_id=user.id,
+        full_name=user.full_name,
+    )
+
+
+@router.post("/firebase-verify", response_model=TokenResponse)
+def verify_firebase_login(req: FirebaseVerifyRequest, db: Session = Depends(get_db)):
+    """
+    Verifies Firebase client ID token, provisions/links user in SQLite,
+    and returns verified token response.
+    """
+    claims = verify_firebase_token(req.id_token)
+    if not claims:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired Firebase ID token.",
+        )
+
+    email = claims.get("email")
+    sub = claims.get("sub")
+    user = db.query(User).filter((User.email == email) | (User.username == sub)).first()
+
+    if not user:
+        role = normalize_role(claims.get("role", "Citizen"))
+        user = User(
+            username=sub[:40] if sub else f"fb_{email.split('@')[0]}",
+            email=email,
+            full_name=claims.get("name") or "Firebase User",
+            hashed_password=hash_password(req.id_token[:16]),
+            role=role,
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    norm_role = normalize_role(user.role)
+    token = create_access_token({"sub": user.username, "role": norm_role, "id": user.id})
+    return TokenResponse(
+        access_token=token,
+        role=norm_role,
         username=user.username,
         user_id=user.id,
         full_name=user.full_name,
@@ -183,7 +231,7 @@ def get_profile(user: User = Depends(require_authenticated_user)):
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
-        "role": user.role,
+        "role": normalize_role(user.role),
         "created_at": user.created_at,
     }
 
@@ -191,7 +239,7 @@ def get_profile(user: User = Depends(require_authenticated_user)):
 @router.post("/seed-users")
 def seed_default_users(db: Session = Depends(get_db)):
     """
-    Seeds default test accounts for all standard roles:
+    Seeds default test accounts for all RBAC roles:
     - citizen / citizen123 (Citizen)
     - operator / operator123 (Operator)
     - officer / officer123 (Nodal Officer)
@@ -209,18 +257,19 @@ def seed_default_users(db: Session = Depends(get_db)):
     created = []
     for uname, pword, role, fname, email in defaults:
         existing = db.query(User).filter(User.username == uname).first()
+        norm_role = normalize_role(role)
         if not existing:
             u = User(
                 username=uname,
                 hashed_password=hash_password(pword),
                 full_name=fname,
-                role=role,
+                role=norm_role,
                 email=email,
             )
             db.add(u)
             db.commit()
             db.refresh(u)
-            if role in (ROLE_NODAL_OFFICER, "Officer"):
+            if norm_role in ("Nodal Officer", "Officer"):
                 off = Officer(
                     user_id=u.id,
                     badge_number=f"NHAA-OFF-{u.id:04d}",
@@ -231,9 +280,7 @@ def seed_default_users(db: Session = Depends(get_db)):
                 db.commit()
             created.append(uname)
         else:
-            # Ensure role is properly normalized for existing seeded accounts
-            if existing.role != role:
-                existing.role = role
-                db.commit()
+            existing.role = norm_role
+            db.commit()
 
-    return {"status": "success", "seeded_users": created, "message": "Default accounts initialized for all 5 roles."}
+    return {"status": "success", "seeded_users": created, "message": "Default RBAC accounts initialized."}

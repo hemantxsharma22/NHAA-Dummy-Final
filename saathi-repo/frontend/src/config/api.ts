@@ -37,7 +37,9 @@ export const getWebSocketUrl = (path: string): string => {
     return `${baseUrl.replace("https://", "wss://")}${cleanPath}`;
   }
   if (baseUrl.startsWith("http://")) {
-    return `${baseUrl.replace("http://", "ws://")}${cleanPath}`;
+    const isLocal = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1");
+    const prefix = isLocal ? "ws://" : "wss://";
+    return `${baseUrl.replace(/^https?:\/\//, prefix)}${cleanPath}`;
   }
   
   if (typeof window !== "undefined") {
