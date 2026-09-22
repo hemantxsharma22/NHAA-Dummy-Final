@@ -41,7 +41,9 @@ export const getWebSocketUrl = (path: string): string => {
   // Derive WebSocket URL from VITE_SAATHI_API_URL if configured for remote backend (e.g. Render)
   const envApiUrl = typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SAATHI_API_URL;
   if (envApiUrl && typeof envApiUrl === 'string' && envApiUrl.trim() !== '') {
-    const wsBase = envApiUrl.replace(/^http:/, 'ws:').replace(/^https:/, 'wss:').replace(/\/+$/, '');
+    const isLocal = envApiUrl.includes('localhost') || envApiUrl.includes('127.0.0.1');
+    const wsPrefix = isLocal && envApiUrl.startsWith('http:') ? 'ws://' : 'wss://';
+    const wsBase = envApiUrl.replace(/^https?:\/\//, wsPrefix).replace(/\/+$/, '');
     return `${wsBase}${cleanPath}`;
   }
 

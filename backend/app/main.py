@@ -40,13 +40,14 @@ from app.ai_engine_2.engine2_analytics import HISTORICAL_PRECEDENT_ARCHIVES
 Base.metadata.create_all(bind=engine)
 
 # Auto-migrate missing columns for SQLite if live_cases table existed previously
+ALLOWED_MIGRATION_COLUMNS = {
+    "indicators_json": "TEXT",
+    "metric_bars_json": "TEXT",
+    "score_history_json": "TEXT",
+    "delay_risk_score": "INTEGER DEFAULT 15",
+}
 with engine.connect() as conn:
-    for col, col_type in [
-        ("indicators_json", "TEXT"),
-        ("metric_bars_json", "TEXT"),
-        ("score_history_json", "TEXT"),
-        ("delay_risk_score", "INTEGER DEFAULT 15"),
-    ]:
+    for col, col_type in ALLOWED_MIGRATION_COLUMNS.items():
         try:
             conn.execute(text(f"ALTER TABLE live_cases ADD COLUMN {col} {col_type}"))
             conn.commit()
@@ -54,8 +55,10 @@ with engine.connect() as conn:
             pass
 
 
-# Auto-seed baseline users and historical cases if DB is fresh
+# Auto-seed baseline users and historical cases if DB is fresh (Development / Demo only)
 def _seed_initial_data():
+    if os.environ.get("ENV") == "production" and os.environ.get("DEMO_SEED", "").lower() not in ("true", "1"):
+        return
     db = SessionLocal()
     try:
         defaults = [
@@ -121,34 +124,29 @@ app = FastAPI(
 )
 
 # ── CORS Allowlist Configuration ──────────────────────────────────────────────
+# Pinned exact origins to prevent cross-origin credentials leakage (no wildcards)
+safe_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://nhaa-portal.vercel.app",
+]
 allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
-if allowed_origins_env and allowed_origins_env != "*":
-    allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=allowed_origins,
-        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    # Secure default: restrict to localhost and verified cloud deployment patterns
-    safe_defaults = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-    ]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=safe_defaults,
-        allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+if allowed_origins_env:
+    for origin in allowed_origins_env.split(","):
+        clean_o = origin.strip()
+        if clean_o and clean_o != "*" and clean_o not in safe_origins:
+            safe_origins.append(clean_o)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=safe_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+)
 
 # ── In-Memory Sliding-Window Rate Limiting Middleware ─────────────────────────
 app.add_middleware(RateLimitMiddleware)

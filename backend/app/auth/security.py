@@ -8,6 +8,8 @@ import re
 import datetime
 import urllib.request
 import json
+import secrets
+import logging
 from typing import Optional, List, Dict, Any
 import jwt
 import bcrypt
@@ -17,7 +19,18 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.nhaa_models import User
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "nhaa-secure-secret-key-sih26093-2026")
+logger = logging.getLogger("nhaa.security")
+
+# ── JWT Secret & Cryptographic Configuration ──────────────────────────────────
+_raw_jwt_secret = os.environ.get("JWT_SECRET", "").strip()
+if not _raw_jwt_secret:
+    if os.environ.get("ENV") == "production":
+        raise RuntimeError("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is missing in production!")
+    # Cryptographically secure dynamic in-memory random secret for development/testing if unset
+    _raw_jwt_secret = secrets.token_urlsafe(48)
+    logger.warning("SECURITY WARNING: JWT_SECRET not provided in environment. Generated ephemeral 384-bit random secret.")
+
+JWT_SECRET = _raw_jwt_secret
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", os.environ.get("VITE_FIREBASE_PROJECT_ID", "nhaa-case-intelligence"))
@@ -108,13 +121,31 @@ def decode_native_token(token: str) -> Optional[dict]:
 decode_access_token = decode_native_token
 
 
+# ── Google Public Key Cache for Firebase ──────────────────────────────────────
+def _get_google_public_keys() -> Dict[str, str]:
+    global _GOOGLE_PUBLIC_KEYS, _GOOGLE_KEYS_EXPIRY
+    now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+    if _GOOGLE_PUBLIC_KEYS and now < _GOOGLE_KEYS_EXPIRY:
+        return _GOOGLE_PUBLIC_KEYS
+    try:
+        url = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+        req = urllib.request.Request(url, headers={"User-Agent": "NHAA-Security/1.0"})
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            _GOOGLE_PUBLIC_KEYS = data
+            _GOOGLE_KEYS_EXPIRY = now + 3600
+            return _GOOGLE_PUBLIC_KEYS
+    except Exception as e:
+        logger.debug("Could not refresh Google public certs: %s", e)
+        return _GOOGLE_PUBLIC_KEYS
+
+
 # ── Firebase ID Token Verification ───────────────────────────────────────────
 def verify_firebase_token(token: str) -> Optional[dict]:
     """
     Verifies a Firebase ID token.
-    Validates issuer: https://securetoken.google.com/<project_id>
-    Validates audience: <project_id>
-    Validates expiration and signature against Google public certs where reachable.
+    Validates algorithm (RS256), issuer (https://securetoken.google.com/<project_id>),
+    audience (<project_id>), expiration, and RS256 signature against Google public certs.
     """
     try:
         # Decode header to check algorithm (RS256 for Firebase)
@@ -122,28 +153,42 @@ def verify_firebase_token(token: str) -> Optional[dict]:
         if unverified_headers.get("alg") != "RS256":
             return None
 
-        # Decode unverified claims first to inspect issuer & project
-        unverified_claims = jwt.decode(token, options={"verify_signature": False})
-        iss = unverified_claims.get("iss", "")
-        aud = unverified_claims.get("aud", "")
+        kid = unverified_headers.get("kid")
+        google_keys = _get_google_public_keys()
 
-        expected_iss = f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}"
-        # Validate format of Firebase token
-        if not iss.startswith("https://securetoken.google.com/"):
-            return None
-
-        # Check expiration
-        exp = unverified_claims.get("exp", 0)
-        now = datetime.datetime.now(datetime.timezone.utc).timestamp()
-        if exp < now:
+        # If matching Google public certificate is available, verify cryptographically
+        if kid and kid in google_keys:
+            cert_pem = google_keys[kid]
+            from jwt.algorithms import RSAAlgorithm
+            public_key = RSAAlgorithm.from_certificate(cert_pem.encode("utf-8"))
+            claims = jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                audience=FIREBASE_PROJECT_ID,
+                issuer=f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}",
+                options={"verify_signature": True, "verify_aud": True, "verify_iss": True, "verify_exp": True},
+            )
+        elif os.environ.get("ALLOW_MOCK_FIREBASE_TOKENS", "").lower() in ("1", "true", "yes"):
+            # Explicit local offline dev/testing mock mode only
+            claims = jwt.decode(token, options={"verify_signature": False})
+            iss = claims.get("iss", "")
+            if not iss.startswith(f"https://securetoken.google.com/{FIREBASE_PROJECT_ID}"):
+                return None
+            exp = claims.get("exp", 0)
+            now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+            if exp < now:
+                return None
+        else:
+            # Reject token when signature cannot be validated against a trusted Google cert
             return None
 
         # Extract standard Firebase claims
         return {
-            "sub": unverified_claims.get("sub"),
-            "email": unverified_claims.get("email"),
-            "name": unverified_claims.get("name") or unverified_claims.get("email", "").split("@")[0],
-            "role": normalize_role(unverified_claims.get("role") or "Citizen"),
+            "sub": claims.get("sub"),
+            "email": claims.get("email"),
+            "name": claims.get("name") or claims.get("email", "").split("@")[0],
+            "role": normalize_role(claims.get("role") or "Citizen"),
             "firebase": True,
         }
     except Exception:
