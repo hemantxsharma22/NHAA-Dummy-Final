@@ -1,140 +1,140 @@
 {
   "version": "1.0.0",
-  "total_samples": 3150,
-  "train_samples": 2520,
-  "test_samples": 630,
+  "total_samples": 5796,
+  "train_samples": 4636,
+  "test_samples": 1160,
   "num_categories": 21,
-  "overall_accuracy": 0.9889,
-  "macro_avg_precision": 0.9901,
-  "macro_avg_recall": 0.9889,
-  "macro_avg_f1": 0.9888,
-  "weighted_avg_f1": 0.9888,
+  "overall_accuracy": 1.0,
+  "macro_avg_precision": 1.0,
+  "macro_avg_recall": 1.0,
+  "macro_avg_f1": 1.0,
+  "weighted_avg_f1": 1.0,
   "categories": {
     "CHILD_ELDERLY_DISABILITY_VULNERABILITY": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "COERCION_BLACKMAIL": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "CONTRADICTORY_CHANGING_SITUATION": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "CURRENT_SAFETY_REASSURANCE": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "DISCRIMINATION_CASTE_VULNERABILITY": {
-      "precision": 0.9091,
+      "precision": 1.0,
       "recall": 1.0,
-      "f1_score": 0.9524,
-      "test_support": 30
+      "f1_score": 1.0,
+      "test_support": 55
     },
     "DOMESTIC_FAMILY_VIOLENCE": {
-      "precision": 0.8824,
+      "precision": 1.0,
       "recall": 1.0,
-      "f1_score": 0.9375,
-      "test_support": 30
+      "f1_score": 1.0,
+      "test_support": 55
     },
     "FEAR_DISTRESS_PANIC": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 56
     },
     "IMMEDIATE_PHYSICAL_DANGER": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 56
     },
     "ISOLATION_NO_SUPPORT": {
       "precision": 1.0,
-      "recall": 0.8667,
-      "f1_score": 0.9286,
-      "test_support": 30
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "test_support": 55
     },
     "MEDICAL_EMERGENCY": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "NEUTRAL_NO_INDICATOR": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 56
     },
     "NO_SAFE_PLACE_HOMELESSNESS": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "PHYSICAL_VIOLENCE_INJURY": {
       "precision": 1.0,
-      "recall": 0.9,
-      "f1_score": 0.9474,
-      "test_support": 30
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "test_support": 55
     },
     "REQUEST_COUNSELLING_LEGAL_MEDICAL": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "REQUEST_POLICE_EMERGENCY_HELP": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 56
     },
     "SELF_HARM_CONCERN": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "SEXUAL_VIOLENCE_HARASSMENT": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "SOCIAL_COMMUNITY_PRESSURE": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "STALKING_FOLLOWING": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     },
     "THREAT_INTIMIDATION": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 56
     },
     "UNCERTAINTY_UNCLEAR_INFO": {
       "precision": 1.0,
       "recall": 1.0,
       "f1_score": 1.0,
-      "test_support": 30
+      "test_support": 55
     }
   }
 }

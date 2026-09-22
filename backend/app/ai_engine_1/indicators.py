@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
+
 logger = logging.getLogger("ai_engine_1.indicators")
 CONFIG_PATH = Path(__file__).parent / "config.json"
 ML_MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "saathi_model" / "indicator_model.pkl"
@@ -185,11 +187,14 @@ def detect_indicators(
 
     # ── Layer 1: Rule & Keyword Matching across 21 Categories ───────────────────
     for cat_key, cat_cfg in categories_cfg.items():
-        cat_weight = cat_cfg.get("weight", 20.0)
+        cat_weight = float(cat_cfg.get("weight", 20.0))
         ui_label = cat_cfg.get("ui_label", cat_key)
         is_calming_cat = cat_weight < 0 or "CURRENT_SAFETY" in cat_key.upper() or "current_safety" in cat_key.lower()
 
-        for phrase in cat_cfg.get("phrases", []):
+        # Sort phrases by descending length so most specific phrases match first
+        phrases = sorted(cat_cfg.get("phrases", []), key=len, reverse=True)
+
+        for phrase in phrases:
             norm_phrase = _normalize(phrase)
             if norm_phrase and norm_phrase in normalized:
                 negated = is_phrase_negated(text, phrase)
@@ -199,7 +204,7 @@ def detect_indicators(
                 end_char = min(len(text), idx + len(phrase) + 25)
                 snippet = text[start_char:end_char].strip()
 
-                calc_confidence = min(0.96, max(0.75, 0.82 + (len(norm_phrase.split()) * 0.04)))
+                calc_confidence = min(0.98, max(0.80, 0.85 + (len(norm_phrase.split()) * 0.03)))
 
                 if negated:
                     if not is_calming_cat:
@@ -209,6 +214,12 @@ def detect_indicators(
                 if meta_false_positive and not is_calming_cat:
                     continue
 
+                # Severe multiplier for death/life-threatening phrase matches
+                effective_weight = abs(cat_weight)
+                if any(kw in norm_phrase or kw.replace(" ", "_") in norm_phrase or kw in phrase.lower() for kw in ["jaan se maar", "kill me", "murder", "hatya", "qatl", "katl", "mar dalega", "mar dalenge"]):
+                    effective_weight = max(effective_weight, 58.0)
+                    calc_confidence = max(calc_confidence, 0.96)
+
                 assistance_type = classify_assistance_request(text) if "REQUEST" in cat_key.upper() else None
 
                 match_obj = IndicatorMatch(
@@ -216,7 +227,7 @@ def detect_indicators(
                     ui_label=ui_label,
                     matched_phrase=phrase,
                     evidence_snippet=f"...{snippet}..." if snippet else text,
-                    weight=abs(cat_weight),
+                    weight=effective_weight,
                     confidence=round(calc_confidence, 2),
                     is_calming=is_calming_cat,
                     is_negated=negated,
@@ -227,68 +238,82 @@ def detect_indicators(
                 matched_cats.add(cat_key.upper())
 
                 if is_calming_cat:
-                    total_calming_weight += abs(cat_weight)
+                    total_calming_weight += effective_weight
                 else:
                     weight_mult = 0.6 if historical else 1.0
-                    total_distress_weight += cat_weight * weight_mult
+                    total_distress_weight += effective_weight * weight_mult
 
                 break  # One match per category per chunk
 
-    # ── Layer 2: Machine Learning Classification Inference ───────────────────────
+    # ── Layer 2: Machine Learning Classification Inference across Clauses ─────────
     ml_model = _load_ml_model()
     if ml_model and text.strip() and not meta_false_positive:
         try:
             pipeline = ml_model["pipeline"]
             classes = ml_model["classes"]
-            probs = pipeline.predict_proba([normalized])[0]
 
-            top_idx = int(probs.argmax())
-            top_class = classes[top_idx]
-            top_prob = float(probs[top_idx])
+            # Evaluate both full text and sub-clauses (split by conjunctions/punctuation)
+            clauses = re.split(r"[,;.\n]|(?:\b(?:because|lekin|par|aur|and|but|kyunki|or)\b)", text, flags=re.IGNORECASE)
+            eval_texts = [normalized] + [_normalize(c) for c in clauses if len(c.strip()) > 3]
 
-            # If top class is a non-neutral category with sufficient probability
-            if top_class != "NEUTRAL_NO_INDICATOR" and top_prob >= 0.30:
-                top_class_upper = top_class.upper()
-                top_class_lower = top_class.lower()
+            for ev_text in eval_texts:
+                if not ev_text.strip():
+                    continue
+                probs = pipeline.predict_proba([ev_text])[0]
+                top_indices = np.argsort(probs)[::-1]
 
-                # Find configuration for this category
-                cat_cfg = (
-                    categories_cfg.get(top_class_upper)
-                    or categories_cfg.get(top_class_lower)
-                    or {"weight": 25.0, "ui_label": top_class.replace("_", " ").title()}
-                )
-                cat_weight = float(cat_cfg.get("weight", 25.0))
-                ui_label = cat_cfg.get("ui_label", top_class.replace("_", " ").title())
-                is_calming_cat = cat_weight < 0 or "CURRENT_SAFETY" in top_class_upper
+                for idx in top_indices[:3]:
+                    prob = float(probs[idx])
+                    cat = classes[idx]
 
-                if top_class_upper not in matched_cats and top_class_lower not in matched_cats:
-                    ml_match = IndicatorMatch(
-                        category=top_class,
-                        ui_label=ui_label,
-                        matched_phrase=text.strip()[:40],
-                        evidence_snippet=text.strip(),
-                        weight=abs(cat_weight),
-                        confidence=round(top_prob, 2),
-                        is_calming=is_calming_cat,
-                        is_negated=False,
-                        is_historical=historical,
-                        assistance_type=classify_assistance_request(text) if "REQUEST" in top_class_upper else None,
-                    )
-                    indicators.append(ml_match)
-                    matched_cats.add(top_class_upper)
+                    if cat == "NEUTRAL_NO_INDICATOR" or prob < 0.28:
+                        continue
 
-                    if is_calming_cat:
-                        total_calming_weight += abs(cat_weight)
+                    cat_upper = cat.upper()
+                    cat_lower = cat.lower()
+
+                    if cat_upper not in matched_cats and cat_lower not in matched_cats:
+                        cat_cfg = (
+                            categories_cfg.get(cat_upper)
+                            or categories_cfg.get(cat_lower)
+                            or {"weight": 28.0, "ui_label": cat.replace("_", " ").title()}
+                        )
+                        c_weight = float(cat_cfg.get("weight", 28.0))
+                        u_label = cat_cfg.get("ui_label", cat.replace("_", " ").title())
+                        is_calm = c_weight < 0 or "CURRENT_SAFETY" in cat_upper
+
+                        # Check if this clause was negated
+                        if is_phrase_negated(ev_text, ev_text):
+                            continue
+
+                        ml_match = IndicatorMatch(
+                            category=cat,
+                            ui_label=u_label,
+                            matched_phrase=ev_text[:40],
+                            evidence_snippet=text.strip(),
+                            weight=abs(c_weight),
+                            confidence=round(prob, 2),
+                            is_calming=is_calm,
+                            is_negated=False,
+                            is_historical=historical,
+                            assistance_type=classify_assistance_request(text) if "REQUEST" in cat_upper else None,
+                        )
+                        indicators.append(ml_match)
+                        matched_cats.add(cat_upper)
+
+                        if is_calm:
+                            total_calming_weight += abs(c_weight)
+                        else:
+                            w_mult = 0.6 if historical else 1.0
+                            total_distress_weight += abs(c_weight) * w_mult
                     else:
-                        weight_mult = 0.6 if historical else 1.0
-                        total_distress_weight += cat_weight * weight_mult
-                else:
-                    # Update confidence score if ML model is more confident
-                    for ind in indicators:
-                        if ind.category.upper() == top_class_upper:
-                            ind.confidence = max(ind.confidence, round(top_prob, 2))
+                        # Update confidence if ML confidence is higher
+                        for ind in indicators:
+                            if ind.category.upper() == cat_upper:
+                                ind.confidence = max(ind.confidence, round(prob, 2))
         except Exception as e:
             logger.debug(f"ML indicator prediction exception: {e}")
+
 
     # Cap single chunk raw distress contribution
     max_contrib = config.get("svi_config", {}).get("max_single_chunk_contribution", 65)

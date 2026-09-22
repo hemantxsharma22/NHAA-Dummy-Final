@@ -118,10 +118,10 @@
     },
     "DISCRIMINATION_CASTE_VULNERABILITY": {
       "ui_label": "Caste / Discrimination",
-      "weight": 30,
+      "weight": 32,
       "phrases": [
-        "जातिसूचक", "भेदभाव", "दलित", "निचली जाति",
-        "casteist", "caste discrimination", "jaati", "untouchability", "social discrimination"
+        "जातिसूचक", "भेदभाव", "दलित", "निचली जाति", "छुआछूत", "जातिगत", "भेदभाव कर रहे", "जाति के नाम पर", "नीची जाति",
+        "discrimination", "discriminate", "discriminating", "discriminated", "discrimi", "casteist", "caste discrimination", "jaati", "untouchability", "social discrimination", "bhedbhav", "bhed bhav", "mere saath discriminate", "mere sath bhedbhav", "describe kar rahe the mere saath discriminate", "discriminated against"
       ]
     },
     "CHILD_ELDERLY_DISABILITY_VULNERABILITY": {

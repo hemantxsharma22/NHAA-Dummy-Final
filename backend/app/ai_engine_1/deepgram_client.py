@@ -1,5 +1,6 @@
 """
 Engine 1: Deepgram Real-Time STT Client — Server-Side WebSocket Proxy
+Optimized for Hindi, English, and Hinglish streaming transcription.
 
 Connects to Deepgram's real-time streaming API via WebSocket.
 The DEEPGRAM_API_KEY is read exclusively from environment variables
@@ -25,7 +26,7 @@ DEEPGRAM_WS_URL = "wss://api.deepgram.com/v1/listen"
 def get_deepgram_api_key() -> Optional[str]:
     """Read DEEPGRAM_API_KEY from environment. Never hardcoded."""
     key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
-    if key:
+    if key and key != "your_deepgram_api_key_here":
         return key
     # Fallback: reload from root or backend .env
     try:
@@ -40,18 +41,26 @@ def get_deepgram_api_key() -> Optional[str]:
     except Exception:
         pass
     key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
-    return key if key else None
+    return key if (key and key != "your_deepgram_api_key_here") else None
 
 
 def build_deepgram_ws_url(language: str = "hi-IN") -> str:
     """
     Build the Deepgram WebSocket URL with streaming parameters.
-    Container format (WebM Opus) is automatically detected by Deepgram when encoding is omitted.
+    Optimized for Hindi, Indian English, and Hinglish code-mixed streams.
     """
     lang_clean = (language or "hi-IN").lower().strip()
 
+    # Determine optimal language code for Deepgram Nova-2
+    if any(k in lang_clean for k in ("en-in", "indian english", "english (in)", "en")):
+        target_lang = "en-IN" if "in" in lang_clean else "en"
+    else:
+        # Default to Hindi (handles Devanagari Hindi and conversational Hinglish)
+        target_lang = "hi"
+
     params = {
         "model": "nova-2",
+        "language": target_lang,
         "smart_format": "true",
         "punctuate": "true",
         "interim_results": "true",
@@ -60,13 +69,6 @@ def build_deepgram_ws_url(language: str = "hi-IN") -> str:
         "utterance_end_ms": "1000",
         "vad_events": "true",
     }
-
-    if lang_clean in ("hi", "hi-in", "hindi"):
-        params["language"] = "hi"
-    elif lang_clean in ("en", "en-in", "en-us", "english"):
-        params["language"] = "en"
-    else:
-        params["language"] = "multi"
 
     query = "&".join(f"{k}={v}" for k, v in params.items())
     return f"{DEEPGRAM_WS_URL}?{query}"
@@ -79,14 +81,14 @@ class DeepgramStreamError(Exception):
 
 async def create_deepgram_connection(language: str = "hi-IN"):
     """
-    Create and return a WebSocket connection to Deepgram's real-time API.
+    Create and return an active WebSocket connection to Deepgram's real-time API.
     """
     import websockets
 
     api_key = get_deepgram_api_key()
     if not api_key:
         raise DeepgramStreamError(
-            "DEEPGRAM_API_KEY not configured in .env file."
+            "DEEPGRAM_API_KEY not configured in server environment."
         )
 
     url = build_deepgram_ws_url(language)
@@ -105,9 +107,9 @@ async def create_deepgram_connection(language: str = "hi-IN"):
     except Exception as e:
         error_msg = str(e)
         if "401" in error_msg or "403" in error_msg:
-            raise DeepgramStreamError("Invalid DEEPGRAM_API_KEY. Please verify key in .env")
+            raise DeepgramStreamError("Invalid or unauthorized DEEPGRAM_API_KEY.")
         elif "429" in error_msg:
-            raise DeepgramStreamError("Deepgram API quota/rate limit exceeded.")
+            raise DeepgramStreamError("Deepgram API quota or rate limit exceeded.")
         else:
             raise DeepgramStreamError(f"Failed to connect to Deepgram: {error_msg}")
 
@@ -139,7 +141,7 @@ def parse_deepgram_response(raw_message: str) -> dict:
         is_final = data.get("is_final", False)
         speech_final = data.get("speech_final", False)
 
-        # Detect primary speaker ID from words
+        # Detect primary speaker ID from words diarization
         speaker_id = 0
         if words:
             speaker_counts = {}

@@ -148,11 +148,9 @@ def _update_category_scores(
                 0.0, state.category_scores[label] * 0.6
             )
         else:
-            # Distress → blend up
-            state.category_scores[label] = min(
-                100.0,
-                state.category_scores[label] * decay + ind.weight * alpha,
-            )
+            # Distress → blend up, ensuring initial trigger reflects full indicator weight
+            blended = state.category_scores[label] * decay + ind.weight * alpha
+            state.category_scores[label] = min(100.0, max(float(ind.weight), blended))
 
     # Update speech pace separately
     sp_current = state.category_scores.get("Speech pace", 0.0)

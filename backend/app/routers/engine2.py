@@ -12,6 +12,17 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.case_model import LiveCase
+from app.models.nhaa_models import User
+from app.auth.security import (
+    get_current_user,
+    require_role,
+    ROLE_ADMIN,
+    ROLE_NODAL_OFFICER,
+    ROLE_OFFICER,
+    ROLE_OPERATOR,
+    ROLE_VIEWER,
+)
+from app.services.audit_service import record_audit_log
 from app.ai_engine_2.engine2_analytics import (
     HISTORICAL_PRECEDENT_ARCHIVES,
     run_engine2_analysis,
@@ -105,7 +116,11 @@ def get_clusters():
 
 
 @router.post("/adopt-resolution")
-async def adopt_precedent_resolution(request: Request):
+async def adopt_precedent_resolution(
+    request: Request,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Log adoption of a precedent resolution by supervisor into the audit trail.
     """
@@ -116,8 +131,21 @@ async def adopt_precedent_resolution(request: Request):
 
     case_id = body.get("case_id", "")
     precedent_id = body.get("precedent_id", "")
-    operator_name = body.get("operator_name", "Operator")
+    operator_name = (
+        current_user.full_name or current_user.username
+        if current_user
+        else body.get("operator_name", "Operator")
+    )
     resolution_text = body.get("resolution", "")
+
+    # Record sanitized audit log
+    record_audit_log(
+        db=db,
+        action="PRECEDENT_RESOLUTION_ADOPTED",
+        rationale=f"Precedent {precedent_id} resolution adopted: {resolution_text[:200]} by {operator_name}.",
+        user=current_user,
+        ip_address=request.client.host if request.client else None,
+    )
 
     return {
         "status": "success",

@@ -1,7 +1,7 @@
 """
 NHAA Case Intelligence & Complaint Management Router.
 Handles Citizen complaint submission, anonymous tracking, Officer Triage,
-Admin Analytics, and Audit Logging.
+AI overrides, Emergency Escalation, Admin Analytics, and Sanitized Audit Logging.
 """
 
 import json
@@ -9,7 +9,7 @@ import random
 import string
 from datetime import datetime
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -27,7 +27,25 @@ from app.models.nhaa_models import (
     RiskAssessment,
     AuditLog,
 )
-from app.auth.security import get_current_user, require_authenticated_user, require_role
+from app.auth.security import (
+    get_current_user,
+    require_authenticated_user,
+    require_role,
+    ROLE_ADMIN,
+    ROLE_NODAL_OFFICER,
+    ROLE_OFFICER,
+    ROLE_OPERATOR,
+    ROLE_VIEWER,
+    ROLE_CITIZEN,
+)
+from app.services.audit_service import (
+    record_audit_log,
+    log_case_access,
+    log_case_update,
+    log_ai_recommendation,
+    log_ai_override,
+    log_case_escalation,
+)
 from app.nlp_intelligence.spacy_extractor import extract_nlp_entities
 from app.nlp_intelligence.emotion_classifier import analyze_emotion
 from app.nlp_intelligence.case_indicators import extract_case_indicators
@@ -62,12 +80,27 @@ class CaseTriageRequest(BaseModel):
     triage_notes: Optional[str] = None
 
 
+class AIOverrideRequest(BaseModel):
+    original_risk_level: str
+    new_risk_level: str
+    rationale: str
+    original_priority: Optional[str] = None
+    new_priority: Optional[str] = None
+
+
+class CaseEscalationRequest(BaseModel):
+    escalation_tier: Optional[str] = "Senior Nodal Officer / PCR Emergency Dispatch"
+    rationale: str
+    notify_pcr: Optional[bool] = True
+
+
 # ==============================================================================
 # 1. CITIZEN COMPLAINT SUBMISSION (ANONYMOUS OR AUTHENTICATED)
 # ==============================================================================
 @router.post("/api/complaints/submit")
 def submit_complaint(
     req: ComplaintSubmissionRequest,
+    request: Request,
     current_user: Optional[User] = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -92,7 +125,6 @@ def submit_complaint(
     indicators_res = extract_case_indicators(req.narrative)
 
     # 4. Multimodal Fusion & Risk Classification
-    # Synthetic baseline for acoustic features for text submission
     dummy_acoustics = {"rms_energy": 0.05, "pause_ratio": 0.15, "speech_rate": 2.5, "pitch_variation": 0.15}
     fused = fuse_multimodal_features(dummy_acoustics, nlp_res, emotion_res, indicators_res)
     risk_res = risk_engine.classify_multimodal(fused)
@@ -183,17 +215,27 @@ def submit_complaint(
         recommended_action=risk_res["recommended_action"],
     )
     db.add(risk_rec)
-
-    # 10. Audit Log
-    audit = AuditLog(
-        case_id=new_case.id,
-        user_id=current_user.id if current_user else None,
-        user_role=current_user.role if current_user else "Citizen",
-        action="COMPLAINT_FILED",
-        rationale=f"Complaint filed via {req.channel}. Anonymous: {req.is_anonymous}.",
-    )
-    db.add(audit)
     db.commit()
+
+    # 10. Sanitized Audit Log for Complaint Registration
+    record_audit_log(
+        db=db,
+        action="COMPLAINT_FILED",
+        rationale=f"Complaint registered via channel '{req.channel}'. Category: {new_case.category}. Risk: {risk_res['risk_level']}.",
+        case_id=new_case.id,
+        user=current_user,
+        ip_address=request.client.host if request.client else None,
+    )
+
+    # 11. Sanitized Audit Log for AI Recommendation
+    log_ai_recommendation(
+        db=db,
+        case_id=new_case.id,
+        engine_name="Multimodal Risk Classifier (Engine 1 + NLP)",
+        recommendation=risk_res["recommended_action"],
+        risk_level=risk_res["risk_level"],
+        confidence=risk_res["risk_score"],
+    )
 
     return {
         "status": "success",
@@ -216,7 +258,7 @@ def submit_complaint(
 def track_case_status(tracking_id: str, db: Session = Depends(get_db)):
     """
     Public citizen tracking endpoint. Returns high-level status without exposing
-    internal officer notes or sensitive personal data.
+    internal officer notes, audit logs, or sensitive personal data.
     """
     clean_id = tracking_id.strip()
     case = db.query(Case).filter((Case.case_id == clean_id) | (Case.anonymous_id == clean_id)).first()
@@ -238,14 +280,14 @@ def track_case_status(tracking_id: str, db: Session = Depends(get_db)):
 
 
 # ==============================================================================
-# 3. OPERATOR & OFFICER CASE MANAGEMENT
+# 3. RBAC CASE MANAGEMENT (OPERATOR, OFFICER, ADMIN, VIEWER)
 # ==============================================================================
 @router.get("/api/cases")
 def list_cases(
     status: Optional[str] = None,
     risk_level: Optional[str] = None,
     district: Optional[str] = None,
-    user: User = Depends(require_role(["Operator", "Officer", "Admin"])),
+    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN, ROLE_VIEWER])),
     db: Session = Depends(get_db),
 ):
     query = db.query(Case)
@@ -279,12 +321,22 @@ def list_cases(
 @router.get("/api/cases/{case_id}")
 def get_case_detail(
     case_id: str,
-    user: User = Depends(require_role(["Operator", "Officer", "Admin"])),
+    request: Request,
+    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN, ROLE_VIEWER])),
     db: Session = Depends(get_db),
 ):
     case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found.")
+
+    # Audit log for case access by authorized personnel
+    log_case_access(
+        db=db,
+        case_id=case.id,
+        user=user,
+        rationale=f"Case {case.case_id} viewed by {user.username} (Role: {user.role}).",
+        ip_address=request.client.host if request.client else None,
+    )
 
     # Fetch child records
     complaints = db.query(Complaint).filter(Complaint.case_id == case.id).all()
@@ -338,7 +390,7 @@ def get_case_detail(
             else None
         ),
         "audit_logs": [
-            {"action": a.action, "user_role": a.user_role, "rationale": a.rationale, "time": a.timestamp}
+            {"action": a.action, "user_role": a.user_role, "rationale": a.rationale, "timestamp": a.timestamp}
             for a in audits
         ],
     }
@@ -348,7 +400,8 @@ def get_case_detail(
 def triage_case(
     case_id: str,
     req: CaseTriageRequest,
-    user: User = Depends(require_role(["Operator", "Officer", "Admin"])),
+    request: Request,
+    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
     db: Session = Depends(get_db),
 ):
     case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
@@ -364,27 +417,122 @@ def triage_case(
         case.assigned_officer_id = req.assigned_officer_id
 
     case.updated_at = datetime.utcnow()
-
-    # Log action in audit trail
-    audit = AuditLog(
-        case_id=case.id,
-        user_id=user.id,
-        user_role=user.role,
-        action=f"TRIAGE_UPDATE ({old_status} -> {case.status})",
-        rationale=req.triage_notes or f"Updated priority to {case.priority} by {user.full_name or user.username}",
-    )
-    db.add(audit)
     db.commit()
+
+    # Log action in sanitized audit trail
+    log_case_update(
+        db=db,
+        case_id=case.id,
+        user=user,
+        old_status=old_status,
+        new_status=case.status,
+        priority=case.priority,
+        notes=req.triage_notes,
+        ip_address=request.client.host if request.client else None,
+    )
 
     return {"status": "success", "case_id": case.case_id, "new_status": case.status, "priority": case.priority}
 
 
 # ==============================================================================
-# 4. OFFICER DASHBOARD ENDPOINTS
+# 4. AI RECOMMENDATION OVERRIDE (NODAL OFFICER & ADMIN)
+# ==============================================================================
+@router.post("/api/cases/{case_id}/override")
+def override_ai_recommendation(
+    case_id: str,
+    req: AIOverrideRequest,
+    request: Request,
+    user: User = Depends(require_role([ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """
+    Enables authorized Nodal Officers & Admins to formally override an AI-generated
+    risk classification or recommendation, recording non-repudiable audit reasoning.
+    """
+    case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found.")
+
+    if not req.rationale or not req.rationale.strip():
+        raise HTTPException(status_code=400, detail="Officer rationale is mandatory for AI recommendation override.")
+
+    # Update case risk level & priority
+    case.risk_level = req.new_risk_level
+    if req.new_priority:
+        case.priority = req.new_priority
+    case.updated_at = datetime.utcnow()
+    db.commit()
+
+    # Record sanitized audit log
+    log_ai_override(
+        db=db,
+        case_id=case.id,
+        user=user,
+        original_ai_verdict=req.original_risk_level,
+        overridden_verdict=req.new_risk_level,
+        rationale=req.rationale,
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {
+        "status": "success",
+        "case_id": case.case_id,
+        "risk_level": case.risk_level,
+        "priority": case.priority,
+        "overridden_by": user.full_name or user.username,
+        "message": "AI recommendation successfully overridden and recorded in non-repudiable audit trail.",
+    }
+
+
+# ==============================================================================
+# 5. EMERGENCY CASE ESCALATION (OPERATOR, NODAL OFFICER, ADMIN)
+# ==============================================================================
+@router.post("/api/cases/{case_id}/escalate")
+def escalate_case(
+    case_id: str,
+    req: CaseEscalationRequest,
+    request: Request,
+    user: User = Depends(require_role([ROLE_OPERATOR, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
+    db: Session = Depends(get_db),
+):
+    """
+    Escalates a critical case to high-priority emergency status and notifies Nodal dispatch.
+    """
+    case = db.query(Case).filter((Case.case_id == case_id) | (Case.id == int(case_id) if case_id.isdigit() else False)).first()
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found.")
+
+    case.priority = "CRITICAL"
+    case.status = "TRIAGED"
+    case.risk_level = "HIGH"
+    case.updated_at = datetime.utcnow()
+    db.commit()
+
+    # Log escalation in sanitized audit trail
+    log_case_escalation(
+        db=db,
+        case_id=case.id,
+        user=user,
+        escalation_tier=req.escalation_tier or "Senior Nodal Officer",
+        rationale=req.rationale,
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {
+        "status": "success",
+        "case_id": case.case_id,
+        "priority": "CRITICAL",
+        "status_label": case.status,
+        "message": f"Case escalated to {req.escalation_tier}. Immediate dispatch trigger active.",
+    }
+
+
+# ==============================================================================
+# 6. OFFICER DASHBOARD ENDPOINTS
 # ==============================================================================
 @router.get("/api/officer/dashboard")
 def get_officer_dashboard(
-    user: User = Depends(require_role(["Officer", "Admin"])),
+    user: User = Depends(require_role([ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_ADMIN])),
     db: Session = Depends(get_db),
 ):
     total_open = db.query(Case).filter(Case.status == "OPEN").count()
@@ -429,11 +577,11 @@ def get_officer_dashboard(
 
 
 # ==============================================================================
-# 5. ADMIN ANALYTICS & AUDIT LOGS
+# 7. ADMIN ANALYTICS & AUDIT LOGS
 # ==============================================================================
 @router.get("/api/admin/analytics")
 def get_admin_analytics(
-    user: User = Depends(require_role(["Admin"])),
+    user: User = Depends(require_role([ROLE_ADMIN, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_VIEWER])),
     db: Session = Depends(get_db),
 ):
     total_cases = db.query(Case).count()
@@ -444,7 +592,6 @@ def get_admin_analytics(
     open_cases = db.query(Case).filter(Case.status == "OPEN").count()
     resolved_cases = db.query(Case).filter(Case.status.in_(["RESOLVED", "CLOSED"])).count()
 
-    # District grouping
     districts = (
         db.query(Case.district, func.count(Case.id))
         .group_by(Case.district)
@@ -452,7 +599,6 @@ def get_admin_analytics(
     )
     district_data = [{"district": d[0] or "Unassigned", "count": d[1]} for d in districts]
 
-    # Category grouping
     categories = (
         db.query(Case.category, func.count(Case.id))
         .group_by(Case.category)
@@ -485,10 +631,18 @@ def get_admin_analytics(
 @router.get("/api/audit-logs")
 def get_audit_trail(
     limit: int = 50,
-    user: User = Depends(require_role(["Officer", "Admin"])),
+    case_id: Optional[int] = None,
+    action: Optional[str] = None,
+    user: User = Depends(require_role([ROLE_ADMIN, ROLE_NODAL_OFFICER, ROLE_OFFICER, ROLE_VIEWER])),
     db: Session = Depends(get_db),
 ):
-    logs = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit).all()
+    query = db.query(AuditLog)
+    if case_id:
+        query = query.filter(AuditLog.case_id == case_id)
+    if action:
+        query = query.filter(AuditLog.action.contains(action))
+
+    logs = query.order_by(AuditLog.timestamp.desc()).limit(limit).all()
     return [
         {
             "id": l.id,
@@ -496,6 +650,7 @@ def get_audit_trail(
             "user_role": l.user_role,
             "action": l.action,
             "rationale": l.rationale,
+            "ip_address": l.ip_address,
             "timestamp": l.timestamp,
         }
         for l in logs

@@ -505,7 +505,19 @@ export function LiveSessionView({
             if (msg.copilot) setCopilot(msg.copilot);
             if (msg.score_history && Array.isArray(msg.score_history)) setScoreHistory(msg.score_history);
 
-            if (msg.case_record) {
+            // Location extraction from live voice processing
+            if (msg.detected_location && (msg.detected_location.city || msg.detected_location.street || msg.detected_location.district || msg.detected_location.state)) {
+              setDetectedLocation({
+                street: msg.detected_location.street,
+                city: msg.detected_location.city,
+                district: msg.detected_location.district,
+                state: msg.detected_location.state,
+              });
+              const disp = msg.detected_location.city || msg.detected_location.district || msg.detected_location.street || "";
+              if (disp) {
+                setDistrict(disp);
+              }
+            } else if (msg.case_record) {
               if (msg.case_record.city || msg.case_record.district || msg.case_record.street) {
                 setDetectedLocation({
                   street: msg.case_record.street,
@@ -636,7 +648,18 @@ export function LiveSessionView({
       if (data.copilot) setCopilot(data.copilot);
       if (data.score_history && Array.isArray(data.score_history)) setScoreHistory(data.score_history);
 
-      if (data.case_record) {
+      if (data.detected_location && (data.detected_location.city || data.detected_location.street || data.detected_location.district || data.detected_location.state)) {
+        setDetectedLocation({
+          street: data.detected_location.street,
+          city: data.detected_location.city,
+          district: data.detected_location.district,
+          state: data.detected_location.state,
+        });
+        const disp = data.detected_location.city || data.detected_location.district || data.detected_location.street || "";
+        if (disp) {
+          setDistrict(disp);
+        }
+      } else if (data.case_record) {
         if (data.case_record.city || data.case_record.district || data.case_record.street) {
           setDetectedLocation({
             street: data.case_record.street,
@@ -731,7 +754,9 @@ export function LiveSessionView({
               className="bg-transparent text-xs font-semibold text-[#111827] outline-none cursor-pointer"
             >
               <option value="hi-IN">Hindi + English (Hinglish)</option>
+              <option value="hi">Hindi (Devanagari)</option>
               <option value="en-IN">English (Indian Accent)</option>
+              <option value="en">English (Global)</option>
             </select>
           </div>
 
@@ -1009,7 +1034,7 @@ export function LiveSessionView({
                 </h3>
               </div>
               <div className="flex items-center gap-3 text-[10.5px] text-[#6B7280]">
-                <span>Language: <strong className="text-[#111827]">Hinglish (Auto)</strong></span>
+                <span>Language: <strong className="text-[#111827]">{selectedLanguage === "hi-IN" ? "Hindi + English (Hinglish)" : selectedLanguage === "hi" ? "Hindi (Devanagari)" : selectedLanguage === "en-IN" ? "English (Indian)" : "English (Global)"}</strong></span>
                 <span>Auto-scroll: <strong className="text-[#059669]">ON</strong></span>
               </div>
             </div>

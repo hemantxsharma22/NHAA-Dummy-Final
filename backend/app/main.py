@@ -1,6 +1,7 @@
 """
 NHAA AI Case Intelligence Platform — FastAPI Backend Entrypoint
-Supports Citizen, Operator, Officer, and Admin Workflows.
+Hardened with RBAC, Dual-Token Auth, Rate Limiting, Strict CORS, and Sanitized Audit Trail.
+Supports Citizen, Operator, Officer / Nodal Officer, Viewer, and Admin Workflows.
 """
 
 import os
@@ -32,7 +33,15 @@ from app.routers.engine2 import router as engine2_router
 from app.routers.chat import router as chat_router
 from app.routers.auth import router as auth_router
 from app.routers.cases import router as cases_router
-from app.auth.security import hash_password
+from app.auth.security import (
+    hash_password,
+    ROLE_ADMIN,
+    ROLE_NODAL_OFFICER,
+    ROLE_OPERATOR,
+    ROLE_VIEWER,
+    ROLE_CITIZEN,
+)
+from app.auth.rate_limiter import RateLimitMiddleware
 from app.ai_engine_2.engine2_analytics import HISTORICAL_PRECEDENT_ARCHIVES
 
 # Initialize all DB tables
@@ -57,15 +66,16 @@ with engine.connect() as conn:
 def _seed_initial_data():
     db = SessionLocal()
     try:
-        # Seed users if none exist
-        if db.query(User).count() == 0:
-            defaults = [
-                ("citizen", "citizen123", "Citizen", "Rajesh Kumar (Citizen)", "citizen@nhaa.gov.in"),
-                ("operator", "operator123", "Operator", "Priya Sharma (Operator 04)", "operator@nhaa.gov.in"),
-                ("officer", "officer123", "Officer", "Inspector Vikram Singh", "officer@nhaa.gov.in"),
-                ("admin", "admin123", "Admin", "NHAA System Administrator", "admin@nhaa.gov.in"),
-            ]
-            for uname, pword, role, fname, email in defaults:
+        defaults = [
+            ("citizen", "citizen123", ROLE_CITIZEN, "Rajesh Kumar (Citizen)", "citizen@nhaa.gov.in"),
+            ("operator", "operator123", ROLE_OPERATOR, "Priya Sharma (Operator 04)", "operator@nhaa.gov.in"),
+            ("officer", "officer123", ROLE_NODAL_OFFICER, "Inspector Vikram Singh (Nodal Officer)", "officer@nhaa.gov.in"),
+            ("viewer", "viewer123", ROLE_VIEWER, "Sunil Verma (Observer / Auditor)", "viewer@nhaa.gov.in"),
+            ("admin", "admin123", ROLE_ADMIN, "NHAA System Administrator", "admin@nhaa.gov.in"),
+        ]
+        for uname, pword, role, fname, email in defaults:
+            existing = db.query(User).filter(User.username == uname).first()
+            if not existing:
                 u = User(
                     username=uname,
                     hashed_password=hash_password(pword),
@@ -76,10 +86,10 @@ def _seed_initial_data():
                 db.add(u)
                 db.commit()
                 db.refresh(u)
-                if role == "Officer":
+                if role in (ROLE_NODAL_OFFICER, "Officer"):
                     off = Officer(
                         user_id=u.id,
-                        badge_number="NHAA-OFF-1001",
+                        badge_number=f"NHAA-OFF-{u.id:04d}",
                         department="Emergency Response & Triage Cell",
                         rank="Senior Nodal Officer",
                     )
@@ -110,13 +120,31 @@ _seed_initial_data()
 
 app = FastAPI(
     title="NHAA AI Case Intelligence Platform API",
-    description="Multimodal AI decision-support platform for Citizen, Operator, Officer, and Admin workflows (SIH26093)",
-    version="0.3.0",
+    description="Secure Multimodal AI decision-support platform for Citizen, Operator, Officer, Viewer, and Admin workflows (SIH26093)",
+    version="0.4.0",
 )
 
+# 1. Rate Limiting Middleware
+app.add_middleware(RateLimitMiddleware)
+
+# 2. CORS Allowlist Configuration
 allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
+default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
 if allowed_origins_env and allowed_origins_env != "*":
     allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+    for orig in default_origins:
+        if orig not in allowed_origins:
+            allowed_origins.append(orig)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
@@ -128,9 +156,9 @@ if allowed_origins_env and allowed_origins_env != "*":
 else:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=default_origins,
         allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com|http://localhost(:\d+)?|http://127\.0\.0\.1(:\d+)?",
-        allow_credentials=False,
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -149,14 +177,20 @@ def read_root():
     return {
         "status": "healthy",
         "service": "nhaa-ai-case-intelligence",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "pipeline": "multimodal_voice_nlp_risk",
         "speech_stt": "deepgram_streaming_nova2",
         "nlp_engine": "spacy_ner",
         "emotion_engine": "conversational_distress_classifier",
         "risk_engine": "scikit_learn_random_forest",
         "historical_engine": "tfidf_cosine_similarity",
-        "llm_engine": "google_gemini_genai",
+        "llm_engine": "groq_gemini_hybrid",
+        "security": {
+            "jwt_rbac": "active",
+            "firebase_auth": "active",
+            "rate_limiting": "active",
+            "audit_trail": "sanitized_active",
+        },
         "message": "NHAA AI Case Intelligence Platform Active",
     }
 
@@ -182,8 +216,10 @@ def health_check():
             "risk_classifier": "scikit_learn_active",
             "historical_case_matching": "tfidf_cosine_active",
             "jwt_rbac": "active",
+            "rate_limiter": "active",
+            "audit_logging": "active",
         },
-        "roles_supported": ["Citizen", "Operator", "Officer", "Admin"],
+        "roles_supported": ["Citizen", "Operator", "Nodal Officer", "Viewer", "Admin"],
     }
 
 
