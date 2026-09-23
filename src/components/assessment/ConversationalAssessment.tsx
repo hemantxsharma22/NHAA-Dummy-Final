@@ -18,6 +18,7 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 import { audioEngine, type SpeechStatus } from '../../services/audioEngine'
+import { FormattedMessage } from '../common/FormattedMessage'
 import {
   sendConversationMessage,
   sendCounsellorMessage,
@@ -498,7 +499,7 @@ export const ConversationalAssessment: React.FC<ConversationalAssessmentProps> =
                     : 'bg-white border border-slate-200 text-slate-800 rounded-tl-sm'
                 }`}
               >
-                <p className="whitespace-pre-wrap">{msg.content}</p>
+                <FormattedMessage text={msg.content} isUser={isUser} />
                 <span
                   className={`block text-[10px] mt-1.5 text-right ${
                     isUser ? 'text-blue-200' : 'text-slate-400'

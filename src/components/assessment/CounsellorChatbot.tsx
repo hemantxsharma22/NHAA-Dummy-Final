@@ -23,6 +23,7 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { audioEngine } from '../../services/audioEngine'
+import { FormattedMessage } from '../common/FormattedMessage'
 
 interface SuggestionItem {
   id: string
@@ -353,6 +354,7 @@ Like ChatGPT, answer all user questions accurately, engagingly, and empathetical
 Use friendly expressive emojis (🌟, 🤝, 🛡️, ✨, 💡, 🌙, 📋, 🙏, 💬) and natural gestures throughout your response.
 Target Language: ${language === 'hi' ? 'Hindi (Devanagari)' : language === 'hinglish' ? 'Conversational Roman Hinglish' : 'Empathetic English'}. Speak in the exact language/mix the user used (${language}).
 If they ask a question (such as how to get security from a Nodal Officer, sleep/stress relief tips, general knowledge, or PoA Act rights), answer thoroughly with clear bullet points.
+FORMATTING: Do NOT use double asterisks (**) or markdown headers (###). Write in clean, beautiful plain text with clear bullet points and numbered steps.
 ${contextStr}
 Keep your tone warm, encouraging, non-judgmental, and validating. If they are in immediate danger, remind them of toll-free 14566 or 112.`
 
@@ -674,7 +676,7 @@ Keep your tone warm, encouraging, non-judgmental, and validating. If they are in
                       : 'bg-[#003366] text-white rounded-tr-sm'
                   }`}
                 >
-                  <p className="whitespace-pre-line">{msg.text}</p>
+                  <FormattedMessage text={msg.text} isUser={!isCounsellor} />
 
                   {/* Suggestion Cards directly from Assessment */}
                   {msg.suggestions && msg.suggestions.length > 0 && (

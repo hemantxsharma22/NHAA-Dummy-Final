@@ -9,6 +9,7 @@ import {
   Loader2,
   Info,
 } from "lucide-react";
+import { FormattedMessage } from "../../components/common/FormattedMessage";
 import type { CaseRecord } from "../data/caseData";
 
 interface Message {
@@ -198,7 +199,7 @@ export function ChatbotPanel({ currentCase }: ChatbotPanelProps) {
                       : "bg-[#F8F9FA] text-[#1F2430] border border-[#E8EAEE] rounded-bl-none"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{m.text}</p>
+                  <FormattedMessage text={m.text} isUser={m.sender === "user"} />
                   <span
                     className={`block text-[9px] mt-1 text-right ${
                       m.sender === "user" ? "text-[#A0AEC0]" : "text-[#8A8F98]"

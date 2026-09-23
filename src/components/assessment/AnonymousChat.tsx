@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Send, Shield, Lock, ArrowLeft, PhoneCall, Loader2 } from 'lucide-react'
 import { chatService, type ChatMessage } from '../../services/chatService'
+import { FormattedMessage } from '../common/FormattedMessage'
 
 interface AnonymousChatProps {
   anonymousId: string
@@ -132,7 +133,7 @@ export const AnonymousChat: React.FC<AnonymousChatProps> = ({
                       : 'bg-white border border-slate-200 text-slate-800 rounded-tl-xs'
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{msg.text}</p>
+                  <FormattedMessage text={msg.text} isUser={isMe} />
                   <span
                     className={`block text-[9px] mt-1 text-right ${
                       isMe ? 'text-blue-200' : 'text-slate-400'
