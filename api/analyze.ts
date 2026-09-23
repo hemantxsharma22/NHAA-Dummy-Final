@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-import { assessmentService } from '../server/assessmentService'
+import { assessmentService } from '../server/assessmentService.js'
 
 process.env.GROQ_API_KEY = (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '').trim()
 process.env.OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || '').trim()
@@ -30,7 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const combinedText =
       (fullTranscript || '') + ' ' + Object.values(normalisedAnswers).map((r) => r.answer).join(' ')
 
-    let result = {
+    let result: any = {
       distress_level: 'LOW',
       content_indicators: [] as string[],
       vocal_signals: { elevated_pitch: false, speech_rate_anomalous: false, tremor_detected: false },

@@ -3,9 +3,9 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { db } from './db'
-import { assessmentService, MANDATORY_QUESTIONS } from './assessmentService'
-import { scoreSafetyText, safetyStatus, shutdownSidecar } from './safetyClassifier'
+import { db } from './db.js'
+import { assessmentService, MANDATORY_QUESTIONS } from './assessmentService.js'
+import { scoreSafetyText, safetyStatus, shutdownSidecar } from './safetyClassifier.js'
 
 const __filename2 = fileURLToPath(import.meta.url)
 const __dirname2 = path.dirname(__filename2)
@@ -191,7 +191,7 @@ apiRouter.post('/assessment/complete', async (req, res) => {
   // calling the dual-stream evaluator. The model's verdict is authoritative
   // for has_safety_concern and distress_level promotion to HIGH.
   const answerTexts = Object.values(responses || asm.responses)
-    .map((r) => (r && typeof r.answer === 'string' ? r.answer : ''))
+    .map((r: any) => (r && typeof r?.answer === 'string' ? r.answer : ''))
     .join(' ')
   const safetyVerdict = await scoreSafetyText(answerTexts)
 

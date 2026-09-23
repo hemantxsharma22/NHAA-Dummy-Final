@@ -8,7 +8,7 @@
 //   3) falls back to a lightweight keyword heuristic if the sidecar is
 //      unreachable (e.g. Python not installed, demo mode, cold start)
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,7 +41,7 @@ const SIDECAR_BOOT_TIMEOUT_MS = 12_000
 const SIDECAR_HEALTH_POLL_MS = 250
 
 let cachedMeta: { threshold: number; version: string; labels: Record<string, string> } | null = null
-let sidecarProc: ChildProcessWithoutNullStreams | null = null
+let sidecarProc: ChildProcess | null = null
 let sidecarStartedAt = 0
 
 function readMetaSync(): { threshold: number; version: string; labels: Record<string, string> } | null {
@@ -163,14 +163,15 @@ async function ensureSidecar(): Promise<void> {
   const python = process.env.SAATHI_PYTHON || (process.platform === 'win32' ? 'python' : 'python3')
   sidecarStartedAt = Date.now()
   try {
-    sidecarProc = spawn(
+    const proc = spawn(
       python,
       [SERVER_SCRIPT, '--host', SIDECAR_HOST, '--port', String(SIDECAR_PORT), '--model', MODEL_PKL],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     )
-    sidecarProc.stdout.on('data', (b) => process.stdout.write(`[saathi-safety] ${b}`))
-    sidecarProc.stderr.on('data', (b) => process.stderr.write(`[saathi-safety] ${b}`))
-    sidecarProc.on('exit', (code) => {
+    sidecarProc = proc
+    proc.stdout?.on('data', (b) => process.stdout.write(`[saathi-safety] ${b}`))
+    proc.stderr?.on('data', (b) => process.stderr.write(`[saathi-safety] ${b}`))
+    proc.on('exit', (code) => {
       if (code !== 0) console.warn(`[saathi-safety] sidecar exited with code ${code}`)
       sidecarProc = null
     })
