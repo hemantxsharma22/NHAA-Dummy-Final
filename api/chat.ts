@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-const GROQ_API_KEY = (process.env.GROQ_API_KEY || '').trim()
-const GROQ_MODEL = (process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim()
+const GROQ_API_KEY = (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '').trim()
+const GROQ_MODEL = (process.env.GROQ_MODEL || process.env.VITE_GROQ_MODEL || 'openai/gpt-oss-120b').trim()
 
 const SAFETY_KEYWORDS = [
   'kill', 'suicide', 'die', 'murder', 'weapon', 'attack', 'bomb', 'blood',

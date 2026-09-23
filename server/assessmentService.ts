@@ -23,11 +23,11 @@ function cleanAIText(text: string): string {
 }
 
 export function getGroqApiKey(): string {
-  return (process.env.GROQ_API_KEY || '').trim()
+  return (process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY || '').trim()
 }
 
 export function getGroqModel(): string {
-  return (process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim()
+  return (process.env.GROQ_MODEL || process.env.VITE_GROQ_MODEL || 'openai/gpt-oss-120b').trim()
 }
 
 export function getOpenRouterApiKey(): string {
