@@ -1,23 +1,53 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   SearchCheck,
   ArrowLeft,
   Search,
   CheckCircle2,
-  Clock,
-  UserCheck,
-  FileCheck2,
   Printer,
+  AlertOctagon,
+  RefreshCw,
 } from 'lucide-react'
+import { getApiBaseUrl } from '../saathi/config/api'
 
 export const TrackStatus: React.FC = () => {
-  const [tokenInput, setTokenInput] = useState('NHAA-2026-GRV-49210')
-  const [hasSearched, setHasSearched] = useState(true)
+  const [tokenInput, setTokenInput] = useState('NHAA-CASE-2026-29447')
+  const [hasSearched, setHasSearched] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [caseData, setCaseData] = useState<any>(null)
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const fetchCaseStatus = async (idToSearch: string) => {
+    if (!idToSearch.trim()) return
+    setIsLoading(true)
+    setErrorMsg('')
+    try {
+      const cleanId = idToSearch.trim().replace(/^#/, '')
+      const res = await fetch(`${getApiBaseUrl()}/api/sessions/cases/${encodeURIComponent(cleanId)}`)
+      if (!res.ok) {
+        throw new Error(`No record found matching '${cleanId}'`)
+      }
+      const data = await res.json()
+      setCaseData(data)
+      setHasSearched(true)
+    } catch (err: any) {
+      console.warn('Track status lookup failed:', err)
+      setCaseData(null)
+      setErrorMsg(`No record found matching "${idToSearch.trim()}". Please verify the reference URN.`)
+      setHasSearched(true)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchCaseStatus(tokenInput)
+  }, [])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    setHasSearched(true)
+    fetchCaseStatus(tokenInput)
   }
 
   return (
@@ -105,42 +135,69 @@ export const TrackStatus: React.FC = () => {
 
             <button
               type="submit"
-              className="px-6 py-2 bg-[#0f3460] hover:bg-[#162447] text-white font-semibold text-sm rounded shadow-xs transition-colors flex items-center gap-2"
+              disabled={isLoading}
+              className="px-6 py-2 bg-[#0f3460] hover:bg-[#162447] disabled:opacity-50 text-white font-semibold text-sm rounded shadow-xs transition-colors flex items-center gap-2 cursor-pointer"
             >
-              <Search className="w-4 h-4" />
-              <span>Track Status Now</span>
+              {isLoading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Searching Registry...</span>
+                </>
+              ) : (
+                <>
+                  <Search className="w-4 h-4" />
+                  <span>Track Status Now</span>
+                </>
+              )}
             </button>
           </div>
         </form>
       </div>
 
+      {/* Error state */}
+      {errorMsg && (
+        <div className="bg-red-50 border border-red-300 rounded-md p-5 text-red-900 flex items-start gap-3">
+          <AlertOctagon className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-bold">Record Not Found</h3>
+            <p className="text-xs text-red-700 mt-0.5">{errorMsg}</p>
+          </div>
+        </div>
+      )}
+
       {/* Grievance Progress Card */}
-      {hasSearched && (
+      {hasSearched && caseData && (
         <div className="bg-white border border-slate-300 rounded-md p-6 sm:p-8 shadow-xs space-y-6">
           
           {/* Header Summary */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-4 gap-3">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
                   Dossier Ref:
                 </span>
                 <span className="text-lg font-mono font-extrabold text-blue-900">
-                  {tokenInput || 'NHAA-2026-GRV-49210'}
+                  {caseData.caseNumber || caseData.id}
                 </span>
-                <span className="px-2.5 py-0.5 rounded bg-amber-100 text-amber-800 text-xs font-bold border border-amber-300">
-                  Under Police Investigation (FIR Registered)
+                <span className="px-2.5 py-0.5 rounded bg-blue-100 text-blue-900 text-xs font-bold border border-blue-300">
+                  Status: {caseData.status || 'Under Review'}
+                </span>
+                <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                  caseData.priority === 'CRITICAL' ? 'bg-red-600 text-white animate-pulse' :
+                  caseData.priority === 'HIGH' ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-800'
+                }`}>
+                  Priority: {caseData.priority || 'MEDIUM'}
                 </span>
               </div>
               <span className="text-xs text-slate-500 mt-1 block">
-                Lodged on: 28 Aug 2026, 14:32 IST | Complainant: Ram Swaroop (Victim) | State: Uttar Pradesh
+                Lodged on: {caseData.intakeTimestamp || 'Recently'} | Complainant: {caseData.callerNameAnonymized || 'Citizen'} | Jurisdiction: {caseData.displayLocation || caseData.district || 'India'}
               </span>
             </div>
 
             <button
               type="button"
               onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 self-start sm:self-auto"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 self-start sm:self-auto cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Print Dossier</span>
@@ -153,81 +210,30 @@ export const TrackStatus: React.FC = () => {
               Government Milestone Tracking Progress
             </h3>
 
-            <div className="relative">
-              {/* Vertical connector on small screens, horizontal on md */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                
-                {/* Step 1 */}
-                <div className="p-3 rounded bg-emerald-50 border border-emerald-300 text-xs relative">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {caseData.timeline && caseData.timeline.length > 0 ? (
+                caseData.timeline.slice(0, 3).map((item: any, idx: number) => (
+                  <div key={idx} className="p-3.5 rounded bg-blue-50/60 border border-blue-200 text-xs relative">
+                    <div className="flex items-center gap-1.5 text-blue-900 font-bold mb-1">
+                      <CheckCircle2 className="w-4 h-4 text-blue-700 flex-shrink-0" />
+                      <span>Milestone {idx + 1}: {item.timestamp || 'Recorded'}</span>
+                    </div>
+                    <p className="text-slate-700 text-[11px] leading-snug">
+                      {item.description}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3 rounded bg-emerald-50 border border-emerald-300 text-xs col-span-3">
                   <div className="flex items-center gap-1.5 text-emerald-800 font-bold mb-1">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                    <span>1. Grievance Lodged</span>
+                    <span>Case Registered in National Database</span>
                   </div>
-                  <p className="text-slate-600 text-[11px] leading-snug">
-                    Logged via 14566 National Helpline portal.
+                  <p className="text-slate-600 text-[11px]">
+                    Case is actively tracked and assigned for nodal investigation.
                   </p>
-                  <span className="text-[10px] text-emerald-700 font-mono mt-1 block">
-                    28 Aug 2026, 14:32
-                  </span>
                 </div>
-
-                {/* Step 2 */}
-                <div className="p-3 rounded bg-emerald-50 border border-emerald-300 text-xs relative">
-                  <div className="flex items-center gap-1.5 text-emerald-800 font-bold mb-1">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                    <span>2. Scrutiny & Triage</span>
-                  </div>
-                  <p className="text-slate-600 text-[11px] leading-snug">
-                    Verified under SC/ST (PoA) Act Sec 3(1)(r).
-                  </p>
-                  <span className="text-[10px] text-emerald-700 font-mono mt-1 block">
-                    28 Aug 2026, 16:10
-                  </span>
-                </div>
-
-                {/* Step 3 */}
-                <div className="p-3 rounded bg-blue-50 border-2 border-blue-600 text-xs relative shadow-xs">
-                  <div className="flex items-center gap-1.5 text-blue-900 font-bold mb-1">
-                    <Clock className="w-4 h-4 text-blue-600 flex-shrink-0 animate-spin" />
-                    <span>3. Nodal Transfer (Active)</span>
-                  </div>
-                  <p className="text-slate-700 text-[11px] leading-snug">
-                    Transferred to SP Office & Deputy SP (Investigation Officer).
-                  </p>
-                  <span className="text-[10px] text-blue-800 font-mono mt-1 block">
-                    29 Aug 2026, 10:15
-                  </span>
-                </div>
-
-                {/* Step 4 */}
-                <div className="p-3 rounded bg-slate-50 border border-slate-300 text-xs opacity-75">
-                  <div className="flex items-center gap-1.5 text-slate-600 font-bold mb-1">
-                    <UserCheck className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span>4. ATR & FIR Action</span>
-                  </div>
-                  <p className="text-slate-500 text-[11px] leading-snug">
-                    FIR No. 412/2026 filed. Charge sheet under formulation.
-                  </p>
-                  <span className="text-[10px] text-slate-400 font-mono mt-1 block">
-                    Target: 05 Sep 2026
-                  </span>
-                </div>
-
-                {/* Step 5 */}
-                <div className="p-3 rounded bg-slate-50 border border-slate-300 text-xs opacity-75">
-                  <div className="flex items-center gap-1.5 text-slate-600 font-bold mb-1">
-                    <FileCheck2 className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                    <span>5. Relief & Closure</span>
-                  </div>
-                  <p className="text-slate-500 text-[11px] leading-snug">
-                    Interim relief sanction & final compliance.
-                  </p>
-                  <span className="text-[10px] text-slate-400 font-mono mt-1 block">
-                    Pending ATR
-                  </span>
-                </div>
-
-              </div>
+              )}
             </div>
           </div>
 
@@ -235,31 +241,35 @@ export const TrackStatus: React.FC = () => {
           <div className="border border-slate-200 rounded overflow-hidden">
             <div className="bg-slate-100 px-4 py-2 border-b border-slate-200">
               <span className="text-xs font-bold text-slate-800 uppercase tracking-wide">
-                Designated Investigating Authority & Remarks
+                Designated Investigating Authority & Case Brief
               </span>
             </div>
             <table className="w-full text-xs text-left border-collapse">
               <tbody className="divide-y divide-slate-200">
                 <tr className="hover:bg-slate-50">
-                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70 w-1/3">Investigating Officer (IO)</td>
-                  <td className="p-3 text-slate-900 font-medium">Shri R.K. Yadav, Deputy Superintendent of Police (CO Sadar)</td>
+                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70 w-1/3">Jurisdiction District</td>
+                  <td className="p-3 text-slate-900 font-medium">{caseData.displayLocation || caseData.district || 'Jurisdiction Cell'}</td>
                 </tr>
                 <tr className="hover:bg-slate-50">
-                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70">Police Station Jurisdiction</td>
-                  <td className="p-3 text-slate-900">Kotwali Sadar, District Ghaziabad (FIR No. 412/2026)</td>
-                </tr>
-                <tr className="hover:bg-slate-50">
-                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70">Latest Officer Remark (31 Aug 2026)</td>
-                  <td className="p-3 text-slate-900">
-                    Statements of victim and 2 eyewitnesses recorded under Section 161 CrPC. Police bandobast deployed at village site to ensure victim family security.
+                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70">Severity & SVI Index</td>
+                  <td className="p-3 text-slate-900 font-bold">
+                    SVI {caseData.sviScore || 0}/100 ({caseData.svi_label || caseData.priority || 'MEDIUM'})
                   </td>
                 </tr>
                 <tr className="hover:bg-slate-50">
-                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70">Interim Compensation Sanction</td>
-                  <td className="p-3 text-emerald-800 font-semibold">
-                    ₹1,00,000/- (Stage 1 Relief recommended to District Social Welfare Officer)
+                  <td className="p-3 font-semibold text-slate-700 bg-slate-50/70">Official Incident Summary / Narrative</td>
+                  <td className="p-3 text-slate-900 leading-relaxed">
+                    {caseData.caseBrief || caseData.full_transcript || 'Recorded under SC/ST (PoA) Act provisions.'}
                   </td>
                 </tr>
+                {caseData.historicalMatch && (
+                  <tr className="hover:bg-slate-50">
+                    <td className="p-3 font-semibold text-slate-700 bg-slate-50/70">Statutory Precedent & Legal Aid</td>
+                    <td className="p-3 text-indigo-900 font-medium">
+                      {caseData.historicalMatch.resolution}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -32,7 +32,7 @@ def generate_case_brief(
             "source": "gpt" | "template"
         }
     """
-    api_key = os.environ.get("OPENAI_API_KEY", "")
+    api_key = os.environ.get("GROQ_API_KEY", "").strip() or os.environ.get("OPENAI_API_KEY", "").strip()
     top_keywords = [
         ind.get("matched_phrase", "")
         for ind in indicators
@@ -42,10 +42,10 @@ def generate_case_brief(
     if api_key:
         try:
             return _gpt_brief(
-                full_transcript, svi_score, svi_label, top_keywords, operator_name
+                full_transcript, svi_score, svi_label, top_keywords, operator_name, api_key
             )
         except Exception as e:
-            logger.warning("GPT brief failed (%s), falling back to template.", e)
+            logger.warning("AI brief generation failed (%s), falling back to template.", e)
 
     return _template_brief(
         full_transcript, svi_score, svi_label, top_keywords,
@@ -83,31 +83,32 @@ def _gpt_brief(
     svi_label: str,
     top_keywords: List[str],
     operator_name: str,
+    api_key: str,
 ) -> dict:
     from openai import OpenAI
-    base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or None
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=base_url)
+    base_url = "https://api.groq.com/openai/v1" if api_key.startswith("gsk_") else (os.environ.get("OPENAI_BASE_URL", "").strip() or None)
+    model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip() if api_key.startswith("gsk_") else "gpt-3.5-turbo"
+    client = OpenAI(api_key=api_key, base_url=base_url)
     kw_str = ", ".join(f'"{k}"' for k in top_keywords) if top_keywords else "none detected"
 
     prompt = (
-        f"You are an administrative assistant for an emergency helpline. "
-        f"Write a brief, factual, 3-sentence case summary in neutral English for a case record. "
-        f"Do NOT use any diagnostic, medical, or legal language. "
-        f"Do NOT assess guilt, mental health, or veracity. "
+        f"You are an administrative assistant for India's National Helpline Against Atrocities (NHAA - 14566). "
+        f"Write an objective, highly articulate 3-sentence case brief in neutral English for the central database. "
+        f"Do NOT make psychiatric or medical diagnoses. "
         f"Data: Operator: {operator_name}. "
         f"Final SVI score: {int(svi_score)}/100 (label: {svi_label}). "
         f"Key observed phrases: {kw_str}. "
-        f"Transcript excerpt (partial): {transcript[:600]}..."
+        f"Transcript excerpt: {transcript[:800]}..."
     )
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=200,
+        max_tokens=400,
         temperature=0.3,
     )
 
     return {
         "brief_text": response.choices[0].message.content.strip(),
-        "source": "gpt",
+        "source": "groq_ai" if api_key.startswith("gsk_") else "gpt",
     }

@@ -1,16 +1,58 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertOctagon, ArrowLeft, Phone, MapPin, Siren, ShieldAlert } from 'lucide-react'
+import { AlertOctagon, ArrowLeft, Phone, MapPin, Siren, ShieldAlert, RefreshCw } from 'lucide-react'
+import { getApiBaseUrl } from '../saathi/config/api'
 
 export const RegisterRescue: React.FC = () => {
   const [submitted, setSubmitted] = useState(false)
   const [rescueId, setRescueId] = useState('')
+  const [citizenName, setCitizenName] = useState('Suresh Kumar')
+  const [mobile, setMobile] = useState('9812345678')
+  const [stateName, setStateName] = useState('Uttar Pradesh')
+  const [district, setDistrict] = useState('Aligarh')
+  const [exactLocation, setExactLocation] = useState('Near Primary School, Village Kishanpur, Tehsil Atrauli')
+  const [dangerType, setDangerType] = useState('Active physical attack or mob encirclement')
+  const [summary, setSummary] = useState(
+    "A mob has surrounded the victim's house following a dispute over community land. Immediate police force presence required to prevent violence."
+  )
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
 
-  const handleRescueSubmit = (e: React.FormEvent) => {
+  const handleRescueSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const id = `RESCUE-${Math.floor(10000 + Math.random() * 90000)}`
-    setRescueId(id)
-    setSubmitted(true)
+    setIsSubmitting(true)
+    setErrorMsg('')
+    try {
+      const fullNarrative = `EMERGENCY SOS: ${dangerType}. Informer: ${citizenName} (${mobile}). Exact Location: ${exactLocation}, ${district}, ${stateName}. Summary: ${summary}`
+      const res = await fetch(`${getApiBaseUrl()}/api/complaints/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          narrative: fullNarrative,
+          category: 'SOS Emergency Rescue',
+          channel: 'emergency_sos',
+          location: exactLocation,
+          district: `${district}, ${stateName}`,
+          is_anonymous: false,
+          incident_time: 'Immediate / Ongoing',
+          requested_help: 'IMMEDIATE PCR POLICE FORCE DEPLOYMENT & RESCUE',
+        }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Server returned error ${res.status}`)
+      }
+
+      const data = await res.json()
+      const registeredUrn = data.case_id || data.complaint_code || `RESCUE-${Date.now()}`
+      setRescueId(registeredUrn)
+      setSubmitted(true)
+    } catch (err: any) {
+      console.error('Error submitting rescue SOS:', err)
+      setErrorMsg('Failed to transmit emergency rescue to police control room. Please call 14566 or 112 immediately!')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -126,7 +168,8 @@ export const RegisterRescue: React.FC = () => {
               <input
                 type="text"
                 required
-                defaultValue="Suresh Kumar"
+                value={citizenName}
+                onChange={(e) => setCitizenName(e.target.value)}
                 placeholder="Name of contact"
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-red-600 focus:outline-hidden"
               />
@@ -139,7 +182,8 @@ export const RegisterRescue: React.FC = () => {
               <input
                 type="tel"
                 required
-                defaultValue="9812345678"
+                value={mobile}
+                onChange={(e) => setMobile(e.target.value)}
                 placeholder="10-digit mobile number"
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-red-600 focus:outline-hidden"
               />
@@ -150,6 +194,8 @@ export const RegisterRescue: React.FC = () => {
                 State / UT *
               </label>
               <select
+                value={stateName}
+                onChange={(e) => setStateName(e.target.value)}
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:ring-1 focus:ring-red-600 focus:outline-hidden"
               >
                 <option>Uttar Pradesh</option>
@@ -168,7 +214,8 @@ export const RegisterRescue: React.FC = () => {
               <input
                 type="text"
                 required
-                defaultValue="Aligarh"
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
                 placeholder="District name"
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-red-600 focus:outline-hidden"
               />
@@ -182,7 +229,8 @@ export const RegisterRescue: React.FC = () => {
               <input
                 type="text"
                 required
-                defaultValue="Near Primary School, Village Kishanpur, Tehsil Atrauli"
+                value={exactLocation}
+                onChange={(e) => setExactLocation(e.target.value)}
                 placeholder="House, road, landmark or GPS coordinates"
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-red-600 focus:outline-hidden"
               />
@@ -193,6 +241,8 @@ export const RegisterRescue: React.FC = () => {
                 Nature of Immediate Danger / Threat (खतरे की प्रकृति) *
               </label>
               <select
+                value={dangerType}
+                onChange={(e) => setDangerType(e.target.value)}
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:ring-1 focus:ring-red-600 focus:outline-hidden"
               >
                 <option>Active physical attack or mob encirclement</option>
@@ -210,12 +260,19 @@ export const RegisterRescue: React.FC = () => {
               <textarea
                 rows={3}
                 required
-                defaultValue="A mob has surrounded the victim's house following a dispute over community land. Immediate police force presence required to prevent violence."
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
                 className="w-full text-xs sm:text-sm border border-slate-300 rounded p-3 focus:ring-1 focus:ring-red-600 focus:outline-hidden"
                 placeholder="Mention number of victims in danger, whether weapons are present..."
               />
             </div>
           </div>
+
+          {errorMsg && (
+            <div className="p-3 bg-red-100 border border-red-300 text-red-900 text-xs rounded font-bold">
+              {errorMsg}
+            </div>
+          )}
 
           <div className="pt-4 border-t border-slate-200 flex items-center justify-between flex-wrap gap-4">
             <span className="text-xs text-red-800 font-semibold flex items-center gap-1.5">
@@ -225,10 +282,20 @@ export const RegisterRescue: React.FC = () => {
 
             <button
               type="submit"
-              className="px-6 py-2.5 bg-red-700 hover:bg-red-800 text-white font-bold text-sm rounded shadow-sm flex items-center gap-2"
+              disabled={isSubmitting}
+              className="px-6 py-2.5 bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white font-bold text-sm rounded shadow-sm flex items-center gap-2 cursor-pointer"
             >
-              <Siren className="w-4 h-4" />
-              <span>Transmit Rescue SOS Now →</span>
+              {isSubmitting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Transmitting SOS to Police PCR...</span>
+                </>
+              ) : (
+                <>
+                  <Siren className="w-4 h-4" />
+                  <span>Transmit Rescue SOS Now →</span>
+                </>
+              )}
             </button>
           </div>
         </form>

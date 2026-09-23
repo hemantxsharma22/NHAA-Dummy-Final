@@ -133,15 +133,31 @@ def submit_complaint(
     risk_res = risk_engine.classify_multimodal(fused)
 
     # 5. Gemini AI Assistance
-    gemini_intel = generate_case_intelligence(
-        req.narrative,
-        indicators=indicators_res["matched_indicators"],
-        emotion=emotion_res["dominant_emotion"],
-        risk_level=risk_res["risk_level"],
-    )
+    try:
+        gemini_intel = generate_case_intelligence(
+            req.narrative,
+            indicators=indicators_res["matched_indicators"],
+            emotion=emotion_res["dominant_emotion"],
+            risk_level=risk_res["risk_level"],
+        )
+    except Exception as e:
+        logger.warning("generate_case_intelligence failed (%s); using fallback intelligence", e)
+        gemini_intel = {
+            "case_summary": req.narrative[:250],
+            "incident_type": req.category or "general",
+            "key_facts": [req.narrative[:100]],
+            "recommended_questions": ["What is your immediate safety status?", "Can you provide the location of the incident?"],
+            "urgency_indicators": indicators_res.get("matched_indicators", []),
+            "suggested_actions": ["Dispatch nodal team", "Register formal complaint"],
+            "disclaimer": "AI-assisted decision-support only. Not a medical or clinical diagnosis.",
+        }
 
     # 6. Historical Case Matching
-    hist_matches = match_semantic_precedents(req.narrative, req.district or "Central", top_k=3)
+    try:
+        hist_matches = match_semantic_precedents(req.narrative, req.district or "Central", top_k=3)
+    except Exception as e:
+        logger.warning("match_semantic_precedents failed (%s); using empty matches", e)
+        hist_matches = []
 
     # 7. Create Case in DB
     new_case = Case(

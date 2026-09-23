@@ -180,7 +180,7 @@ export const CitizenLogin: React.FC = () => {
                 </div>
               )}
               {errorMsg && (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs animate-in fade-in">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600" />
                   <span>{errorMsg}</span>
                 </div>
@@ -195,7 +195,7 @@ export const CitizenLogin: React.FC = () => {
                     id="citizen-google-signin"
                     onClick={handleGoogleSignIn}
                     disabled={isLoading}
-                    className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 hover:border-blue-300 hover:shadow-md text-slate-700 font-semibold text-sm shadow-xs transition-all disabled:opacity-60 group"
+                    className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 hover:border-blue-300 hover:shadow-md text-slate-700 font-semibold text-sm shadow-xs transition-all disabled:opacity-60 group cursor-pointer"
                   >
                     {isLoading
                       ? <span className="w-5 h-5 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />
@@ -242,7 +242,7 @@ export const CitizenLogin: React.FC = () => {
                     </div>
 
                     <button type="submit" id="citizen-email-signin" disabled={isLoading}
-                      className="w-full py-2.5 px-4 rounded-xl bg-[#003366] hover:bg-[#002244] active:scale-[0.98] text-white font-bold text-sm shadow-md transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#003366] hover:bg-[#002244] active:scale-[0.98] text-white font-bold text-sm shadow-md transition-all disabled:opacity-60 flex items-center justify-center gap-2 cursor-pointer">
                       {isLoading
                         ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                         : <><span>Sign In to Portal</span><ChevronRight className="w-4 h-4" /></>

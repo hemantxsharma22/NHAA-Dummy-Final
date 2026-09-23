@@ -11,6 +11,96 @@ export interface AcousticFeatures {
   hesitationScore: number // 0 - 1
   voiceIntensity: 'low' | 'normal' | 'elevated' | 'tremor'
 }
+/**
+ * Sanitizes AI response text for SpeechSynthesis / TTS:
+ * - Strips emojis and decorative pictographs (⭐, 🌟, 📍, 🙏, 🔒, etc.)
+ * - Strips Markdown symbols (**, ###, |, ---, bullets, blockquotes, etc.)
+ * - Strips raw URLs and link syntax ([Anchor](url) -> Anchor)
+ * - Converts tables into natural comma-separated spoken sentences
+ * - Leaves human-readable, grammatically clean sentences for English, Hindi, and Hinglish
+ */
+export function cleanTextForSpeech(raw: string): string {
+  if (!raw) return ''
+  let text = String(raw)
+
+  // 1. Remove Markdown code blocks completely: ```code```
+  text = text.replace(/```[\s\S]*?```/g, '')
+  // Inline code backticks: `code` -> code
+  text = text.replace(/`([^`]+)`/g, '$1')
+
+  // 2. Remove Markdown images: ![alt](url)
+  text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
+
+  // 3. Remove Markdown links: [anchor](url) -> anchor
+  text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+
+  // 4. Remove raw URLs (http:// or https://)
+  text = text.replace(/https?:\/\/\S+/gi, '')
+
+  // 5. Remove Markdown table separator lines (|---|---|)
+  text = text.replace(/^\s*\|?[\s\-:|]+\|\s*$/gm, '')
+
+  // 6. Handle table rows: "| A | B |" -> "A, B."
+  text = text.replace(/^\s*\|(.+)\|\s*$/gm, (_, rowContent) => {
+    const cells = rowContent.split('|').map((c: string) => c.trim()).filter(Boolean)
+    return cells.join(', ') + '.'
+  })
+  // Replace residual pipes
+  text = text.replace(/\|/g, ', ')
+
+  // 7. Remove Markdown headers (### Header -> Header)
+  text = text.replace(/^#{1,6}\s+/gm, '')
+
+  // 8. Remove blockquote markers (> Quote -> Quote)
+  text = text.replace(/^>\s+/gm, '')
+
+  // 9. Remove horizontal rules (---, ***, ___)
+  text = text.replace(/^[\s\-_*]{3,}\s*$/gm, '')
+
+  // 10. Remove bullet point markers at start of lines (*, -, +, •, ▪, etc.)
+  text = text.replace(/^[\s]*[-*+•▪▫—]\s+/gm, '')
+
+  // 11. Remove bold/italics: **text**, *text*, __text__, _text_
+  text = text.replace(/(\*\*|__)(.*?)\1/g, '$2')
+  text = text.replace(/(\*|_)(.*?)\1/g, '$2')
+
+  // 12. Strikethrough ~~text~~
+  text = text.replace(/~~(.*?)~~/g, '$1')
+
+  // 13. Convert keycap number emojis (e.g. 1️⃣ -> 1., 2️⃣ -> 2.)
+  text = text.replace(/([0-9])[\uFE0F\u20E3]+/g, '$1.')
+
+  // 14. Remove all Unicode Emojis, Pictographs, and Symbols
+  try {
+    text = text.replace(/\p{Extended_Pictographic}/gu, '')
+  } catch (e) {
+    // In case regex property escape isn't supported in current environment
+  }
+
+  // Explicit Unicode symbol & emoji ranges
+  text = text.replace(
+    /[\u{1F300}-\u{1F9FF}\u{1FA00}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu,
+    ''
+  )
+
+  // Common symbols fallback: ⭐, 🌟, 📍, 🙏, 🔒, etc.
+  text = text.replace(/[⭐🌟📍🙏🔒🛡✨💡🌙📋💬📞🚨🚔🌸🌼🤝📱🫁☕✅❌❓❗✈️✉️➡️⬅️⬆️⬇️]/g, '')
+
+  // 15. Clean residual Markdown formatting or UI artifacts
+  text = text.replace(/[*_#~]/g, '')
+
+  // 16. Normalize spaces and multiple newlines
+  text = text.replace(/[ \t]+/g, ' ')
+  text = text.replace(/\n\s*\n/g, '. ')
+  text = text.replace(/\n/g, ' ')
+  text = text.replace(/\s+([.,!?;:।])/g, '$1')
+  text = text.replace(/([.,!?;:।])\1+/g, '$1')
+  text = text.replace(/([!?।])\s*\./g, '$1')
+  text = text.replace(/:\s*\./g, ':')
+  text = text.replace(/([.,!?;:।])([^\s0-9.,!?;:।])/g, '$1 $2')
+
+  return text.trim()
+}
 
 export class AudioEngine {
   private mediaStream: MediaStream | null = null
@@ -494,6 +584,15 @@ export class AudioEngine {
     return englishVoice || null
   }
 
+  // Helper to split text into natural sentences for smooth TTS
+  splitIntoSentences(text: string): string[] {
+    const clean = cleanTextForSpeech(text)
+    if (!clean) return []
+    const matches = clean.match(/[^.!?।\n]+[.!?।\n]*/g)
+    if (!matches) return [clean]
+    return matches.map((s) => s.trim()).filter((s) => s.length > 0)
+  }
+
   // AI Voice Narration for Multiple Sentences sequentially
   // Speaks sentence 0 -> onSentenceStart(0) -> finishes -> speaks sentence 1 -> onSentenceStart(1)... -> onComplete()
   speakSentences(
@@ -507,6 +606,16 @@ export class AudioEngine {
       return () => {}
     }
 
+    // Clean all sentences before sending to TTS (strip emojis, Markdown, URLs, etc.)
+    const cleanSentences = sentences
+      .map((s) => cleanTextForSpeech(s))
+      .filter((s) => s.length > 0)
+
+    if (cleanSentences.length === 0) {
+      if (onComplete) onComplete()
+      return () => {}
+    }
+
     window.speechSynthesis.cancel()
     let isCancelled = false
     let currentIndex = 0
@@ -515,12 +624,12 @@ export class AudioEngine {
     const speakNextSentence = () => {
       if (isCancelled) return
 
-      if (currentIndex >= sentences.length) {
+      if (currentIndex >= cleanSentences.length) {
         if (onComplete) onComplete()
         return
       }
 
-      const sentenceText = sentences[currentIndex].trim()
+      const sentenceText = cleanSentences[currentIndex].trim()
       if (!sentenceText) {
         currentIndex++
         speakNextSentence()
@@ -583,8 +692,22 @@ export class AudioEngine {
       return
     }
 
+    // Clean text before sending to TTS (strip emojis, Markdown, URLs, etc.)
+    const clean = cleanTextForSpeech(text)
+    if (!clean) {
+      if (onEnd) onEnd()
+      return
+    }
+
+    // If multi-sentence, speak sequentially for natural breathing and to prevent browser TTS cutoffs
+    const sentences = this.splitIntoSentences(clean)
+    if (sentences.length > 1) {
+      this.speakSentences(sentences, lang, undefined, onEnd)
+      return
+    }
+
     window.speechSynthesis.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
+    const utterance = new SpeechSynthesisUtterance(clean)
     utterance.rate = 0.95
     utterance.pitch = 1.0
 

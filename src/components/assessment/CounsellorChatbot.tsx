@@ -84,7 +84,7 @@ const DIRECT_GROQ_KEY =
   ''
 
 const CLIENT_GROQ_MODELS = [
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || '',
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || 'openai/gpt-oss-120b',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
   'groq/compound-mini',

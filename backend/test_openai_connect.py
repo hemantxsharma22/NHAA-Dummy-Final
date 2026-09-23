@@ -2,9 +2,15 @@ import os
 import io
 import wave
 import struct
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv("backend/.env")
+# Load from canonical project root .env
+_root_env = Path(__file__).resolve().parents[1] / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env)
+else:
+    load_dotenv()
 from openai import OpenAI
 
 api_key = os.environ.get("OPENAI_API_KEY", "")

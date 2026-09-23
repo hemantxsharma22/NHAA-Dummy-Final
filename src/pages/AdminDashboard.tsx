@@ -256,77 +256,58 @@ export const AdminDashboard: React.FC = () => {
     setTimeout(() => setIsRefreshing(false), 500)
   }
 
-  const mockCases: TriageCase[] = [
-    {
-      urn: 'NHAA-2026-GRV-88392',
-      victim: 'Jagdish Chandra',
-      type: 'Social Boycott & Water Denial',
-      district: 'Ghaziabad, UP',
-      ps: 'Kotwali Sadar',
-      priority: 'HIGH',
-      status: 'Investigation (FIR Filed)',
-      connectionStatus: 'Completed',
-      date: '02 Sep 2026',
-      intakeTimestampExact: '2026-09-02T10:15:00+05:30',
-      clientIp: '14.139.60.10',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0.0.0 Safari/537.36',
-    },
-    {
-      urn: 'RESCUE-90142',
-      victim: 'Anita Devi & Family',
-      type: 'Mob Encirclement & Physical Threat',
-      district: 'Aligarh, UP',
-      ps: 'Atrauli Police Stn',
-      priority: 'CRITICAL',
-      status: 'Police Force Deployed',
-      connectionStatus: 'Completed',
-      date: '03 Sep 2026 (12 mins ago)',
-      intakeTimestampExact: '2026-09-03T11:42:00+05:30',
-      clientIp: '103.248.80.22',
-      userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Mobile Safari/537.36',
-    },
-    {
-      urn: 'NHAA-2026-GRV-87114',
-      victim: 'Maheshwar Paswan',
-      type: 'Land Dispossession / Eviction',
-      district: 'Patna, Bihar',
-      ps: 'Phulwari Sharif',
-      priority: 'MEDIUM',
-      status: 'DM Notice Issued',
-      connectionStatus: 'Completed',
-      date: '31 Aug 2026',
-      intakeTimestampExact: '2026-08-31T09:30:00+05:30',
-      clientIp: '117.218.45.19',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0',
-    },
-    {
-      urn: 'NHAA-2026-GRV-86501',
-      victim: 'Devika Bai',
-      type: 'Public Humiliation & Abuse',
-      district: 'Bhopal, MP',
-      ps: 'Govindpura',
-      priority: 'RESOLVED',
-      status: 'ATR Submitted & Closed',
-      connectionStatus: 'Completed',
-      date: '27 Aug 2026',
-      intakeTimestampExact: '2026-08-27T16:20:00+05:30',
-      clientIp: '157.34.112.5',
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15',
-    },
-  ]
+  // Officer action state for Dossier Modal
+  const [actionStatus, setActionStatus] = useState<string>('')
+  const [actionPriority, setActionPriority] = useState<string>('')
+  const [actionRemarks, setActionRemarks] = useState<string>('')
+  const [isSavingAction, setIsSavingAction] = useState<boolean>(false)
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string>('')
 
-  // Combined cases: live and real database queue items at top, followed by mock cases
-  const allCases: TriageCase[] = [
-    ...realBackendQueue,
-    ...mockCases.filter(
-      (mc) => !realBackendQueue.some((rc) => rc.urn === mc.urn || (rc.sessionId && mc.urn.includes(rc.sessionId)))
-    ),
-  ]
+  const handleOpenDossier = (c: TriageCase) => {
+    setSelectedMetaCase(c)
+    setActionStatus(c.status || 'Under Review')
+    setActionPriority(c.priority || 'MEDIUM')
+    setActionRemarks('')
+    setActionSuccessMsg('')
+  }
+
+  const handleSaveOfficerAction = async () => {
+    if (!selectedMetaCase) return
+    setIsSavingAction(true)
+    setActionSuccessMsg('')
+    try {
+      const cleanUrn = selectedMetaCase.urn.replace(/^#/, '')
+      const res = await fetch(`${getApiBaseUrl()}/api/sessions/cases/${encodeURIComponent(cleanUrn)}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: actionStatus,
+          priority: actionPriority,
+          remarks: actionRemarks || 'Status/priority verified and updated by officer in charge.',
+          officer_name: 'Shri A.K. Srivastava (IAS)',
+        }),
+      })
+      if (!res.ok) throw new Error('Action failed')
+      setActionSuccessMsg('Action saved successfully to national database.')
+      await Promise.all([fetchQueue(), fetchStats()])
+      setSelectedMetaCase((prev) =>
+        prev ? { ...prev, status: actionStatus, priority: actionPriority } : null
+      )
+    } catch (e) {
+      console.error(e)
+      alert('Failed to save officer action. Please check server.')
+    } finally {
+      setIsSavingAction(false)
+    }
+  }
+
+  // 100% data-driven from real backend queue & database cases. Zero mock/fake cases.
+  const allCases: TriageCase[] = realBackendQueue
 
   const filteredCases = allCases.filter((c) => {
     if (selectedStatus === 'urgent') return c.priority === 'CRITICAL' || c.priority === 'HIGH' || c.isLive
-    if (selectedStatus === 'pending') return c.priority !== 'RESOLVED' && c.status !== 'ATR Submitted & Closed'
-    if (selectedStatus === 'resolved') return c.priority === 'RESOLVED' || c.status === 'ATR Submitted & Closed'
+    if (selectedStatus === 'pending') return c.priority !== 'RESOLVED' && c.status !== 'ATR Submitted & Closed' && c.status !== 'CLOSED'
+    if (selectedStatus === 'resolved') return c.priority === 'RESOLVED' || c.status === 'ATR Submitted & Closed' || c.status === 'CLOSED'
     return true
   })
 
@@ -364,7 +345,11 @@ export const AdminDashboard: React.FC = () => {
 
             <button
               type="button"
-              onClick={() => navigate('/admin/login')}
+              onClick={() => {
+                localStorage.removeItem('nhaa_token')
+                localStorage.removeItem('nhaa_user')
+                navigate('/admin/login')
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-700 hover:bg-red-800 text-white text-xs font-semibold shadow-xs transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -580,133 +565,147 @@ export const AdminDashboard: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {filteredCases.map((c) => (
-                      <tr
-                        key={c.urn}
-                        className={`transition-colors ${
-                          c.isLive
-                            ? 'bg-purple-50/50 hover:bg-purple-100/60 border-l-4 border-l-purple-600'
-                            : 'hover:bg-slate-50/80'
-                        }`}
-                      >
-                        {/* Reference URN & Session ID */}
-                        <td className="p-3 font-mono">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-blue-900">{c.urn}</span>
-                            {c.isLive && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-300 text-[9px] font-bold uppercase animate-pulse">
-                                <span className="w-1.5 h-1.5 rounded-full bg-purple-600"></span>
-                                LIVE
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
-                            ID: {c.sessionId || c.urn.slice(-8)}
-                          </span>
-                        </td>
-
-                        {/* Victim & Exact Intake Timestamp */}
-                        <td className="p-3 font-medium text-slate-900">
-                          <div className="font-bold">{c.victim}</div>
-                          <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                            <Clock className="w-2.5 h-2.5 text-slate-400 shrink-0" />
-                            <span>{formatIntakeDateTime(c.intakeTimestampExact, c.date)}</span>
-                          </div>
-                          {c.isLive && (
-                            <div className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1 mt-0.5">
-                              <Activity className="w-2.5 h-2.5 shrink-0 animate-pulse text-emerald-600" />
-                              <span>Active: {formatLastActive(c.lastActivityAt, c.lastActivitySeconds)}</span>
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Alleged Offence / Distress Factor */}
-                        <td className="p-3 text-slate-700 max-w-xs">
-                          <div className="line-clamp-2">{c.type}</div>
-                          {c.sviScore !== undefined && c.sviScore > 0 && (
-                            <span className="inline-block mt-1 text-[10px] px-1.5 py-0.2 rounded font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                              SVI {c.sviScore}/100 ({c.sviLabel || 'LOW'})
+                    {filteredCases.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="text-center py-12 text-slate-500 bg-white">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <FileText className="w-8 h-8 text-slate-300" />
+                            <span className="text-sm font-semibold text-slate-700">No Cases In Triage Queue</span>
+                            <span className="text-xs text-slate-400">
+                              {selectedStatus !== 'all'
+                                ? `No cases match the selected filter "${selectedStatus}".`
+                                : 'There are currently no complaints or live calls in the database.'}
                             </span>
-                          )}
-                        </td>
-
-
-
-                        {/* Priority */}
-                        <td className="p-3">
-                          {c.priority === 'CRITICAL' && (
-                            <span className="px-2 py-0.5 rounded bg-red-600 text-white font-extrabold text-[10px] uppercase animate-pulse">
-                              CRITICAL SOS
-                            </span>
-                          )}
-                          {c.priority === 'HIGH' && (
-                            <span className="px-2 py-0.5 rounded bg-amber-500 text-white font-bold text-[10px] uppercase">
-                              HIGH
-                            </span>
-                          )}
-                          {c.priority === 'MEDIUM' && (
-                            <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold text-[10px] uppercase">
-                              MEDIUM
-                            </span>
-                          )}
-                          {c.priority === 'RESOLVED' && (
-                            <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase">
-                              RESOLVED
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Workflow Status & Connection Status */}
-                        <td className="p-3">
-                          <div className="flex items-center gap-1.5 mb-1">
-                            {c.connectionStatus === 'Active' && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[10px] border border-blue-300">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></span>
-                                Active Stream
-                              </span>
-                            )}
-                            {c.connectionStatus === 'Online' && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold text-[10px] border border-emerald-300">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                                Online
-                              </span>
-                            )}
-                            {c.connectionStatus === 'Disconnected' && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold text-[10px] border border-amber-300">
-                                Disconnected
-                              </span>
-                            )}
-                            {(!c.connectionStatus || c.connectionStatus === 'Completed') && (
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-medium text-[10px]">
-                                Completed
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-semibold text-slate-800 text-[11px]">{c.status}</div>
-                          {c.clientIp && (
-                            <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                              <Shield className="w-2.5 h-2.5 text-blue-600 shrink-0" />
-                              <span>IP: {c.clientIp}</span>
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Actions */}
-                        <td className="p-3 text-right">
-                          <div className="inline-flex items-center gap-1.5 justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedMetaCase(c)}
-                              title="View Dossier, Location, Metadata & Audit"
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#0f3460] hover:bg-[#162447] text-white text-[11px] font-semibold transition-colors"
-                            >
-                              <Eye className="w-3 h-3" />
-                              <span>Dossier / View</span>
-                            </button>
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      filteredCases.map((c) => (
+                        <tr
+                          key={c.urn}
+                          className={`transition-colors ${
+                            c.isLive
+                              ? 'bg-purple-50/50 hover:bg-purple-100/60 border-l-4 border-l-purple-600'
+                              : 'hover:bg-slate-50/80'
+                          }`}
+                        >
+                          {/* Reference URN & Session ID */}
+                          <td className="p-3 font-mono">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-bold text-blue-900">{c.urn}</span>
+                              {c.isLive && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 border border-purple-300 text-[9px] font-bold uppercase animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-purple-600"></span>
+                                  LIVE
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+                              ID: {c.sessionId || c.urn.slice(-8)}
+                            </span>
+                          </td>
+
+                          {/* Victim & Exact Intake Timestamp */}
+                          <td className="p-3 font-medium text-slate-900">
+                            <div className="font-bold">{c.victim}</div>
+                            <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
+                              <Clock className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                              <span>{formatIntakeDateTime(c.intakeTimestampExact, c.date)}</span>
+                            </div>
+                            {c.isLive && (
+                              <div className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1 mt-0.5">
+                                <Activity className="w-2.5 h-2.5 shrink-0 animate-pulse text-emerald-600" />
+                                <span>Active: {formatLastActive(c.lastActivityAt, c.lastActivitySeconds)}</span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Alleged Offence / Distress Factor */}
+                          <td className="p-3 text-slate-700 max-w-xs">
+                            <div className="line-clamp-2">{c.type}</div>
+                            {c.sviScore !== undefined && c.sviScore > 0 && (
+                              <span className="inline-block mt-1 text-[10px] px-1.5 py-0.2 rounded font-mono font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                                SVI {c.sviScore}/100 ({c.sviLabel || 'LOW'})
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Priority */}
+                          <td className="p-3">
+                            {c.priority === 'CRITICAL' && (
+                              <span className="px-2 py-0.5 rounded bg-red-600 text-white font-extrabold text-[10px] uppercase animate-pulse">
+                                CRITICAL SOS
+                              </span>
+                            )}
+                            {c.priority === 'HIGH' && (
+                              <span className="px-2 py-0.5 rounded bg-amber-500 text-white font-bold text-[10px] uppercase">
+                                HIGH
+                              </span>
+                            )}
+                            {c.priority === 'MEDIUM' && (
+                              <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 font-semibold text-[10px] uppercase">
+                                MEDIUM
+                              </span>
+                            )}
+                            {c.priority === 'RESOLVED' && (
+                              <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase">
+                                RESOLVED
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Workflow Status & Connection Status */}
+                          <td className="p-3">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              {c.connectionStatus === 'Active' && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-bold text-[10px] border border-blue-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></span>
+                                  Active Stream
+                                </span>
+                              )}
+                              {c.connectionStatus === 'Online' && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-semibold text-[10px] border border-emerald-300">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                  Online
+                                </span>
+                              )}
+                              {c.connectionStatus === 'Disconnected' && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold text-[10px] border border-amber-300">
+                                  Disconnected
+                                </span>
+                              )}
+                              {(!c.connectionStatus || c.connectionStatus === 'Completed') && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-medium text-[10px]">
+                                  Completed
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-semibold text-slate-800 text-[11px]">{c.status}</div>
+                            {c.clientIp && (
+                              <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
+                                <Shield className="w-2.5 h-2.5 text-blue-600 shrink-0" />
+                                <span>IP: {c.clientIp}</span>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="p-3 text-right">
+                            <div className="inline-flex items-center gap-1.5 justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenDossier(c)}
+                                title="View Dossier, Location, Metadata & Audit"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#0f3460] hover:bg-[#162447] text-white text-[11px] font-semibold transition-colors cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Dossier / View</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -898,6 +897,101 @@ export const AdminDashboard: React.FC = () => {
                 </div>
                 <div className="bg-slate-900 text-slate-200 p-2.5 rounded font-mono text-[10px] break-all border border-slate-700">
                   {selectedMetaCase.userAgent || 'No User-Agent header supplied'}
+                </div>
+              </div>
+
+              {/* Officer Decision & Case Management Action */}
+              <div className="p-4 rounded border-2 border-blue-600 bg-blue-50/50 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 flex items-center gap-1.5 uppercase tracking-wide">
+                    <Shield className="w-4 h-4 text-blue-700" />
+                    <span>Officer Triage Action & Directives</span>
+                  </span>
+                  <span className="text-[10px] bg-blue-200 text-blue-900 px-2 py-0.5 rounded font-mono font-bold">
+                    Official CCTNS Registry
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Investigation / Triage Status
+                    </label>
+                    <select
+                      value={actionStatus}
+                      onChange={(e) => setActionStatus(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white font-medium text-slate-800 focus:ring-1 focus:ring-blue-700"
+                    >
+                      <option value="OPEN">OPEN (Pending Review)</option>
+                      <option value="TRIAGED">TRIAGED (Assigned to Cell)</option>
+                      <option value="IN_INVESTIGATION">IN_INVESTIGATION (FIR Tracked)</option>
+                      <option value="POLICE_FORCE_DEPLOYED">POLICE_FORCE_DEPLOYED (Emergency Unit On-Site)</option>
+                      <option value="RESOLVED">RESOLVED (ATR Submitted)</option>
+                      <option value="CLOSED">CLOSED (Final Disposal)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Case Priority Level
+                    </label>
+                    <select
+                      value={actionPriority}
+                      onChange={(e) => setActionPriority(e.target.value)}
+                      className="w-full text-xs border border-slate-300 rounded px-2.5 py-1.5 bg-white font-medium text-slate-800 focus:ring-1 focus:ring-blue-700"
+                    >
+                      <option value="CRITICAL">CRITICAL (SOS Immediate Response)</option>
+                      <option value="HIGH">HIGH (Urgent Atrocity Threat)</option>
+                      <option value="MEDIUM">MEDIUM (Standard Legal Aid & Scrutiny)</option>
+                      <option value="LOW">LOW (Informational / Query)</option>
+                      <option value="RESOLVED">RESOLVED</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Officer Remarks & Directives (Recorded in Audit Trail)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={actionRemarks}
+                    onChange={(e) => setActionRemarks(e.target.value)}
+                    placeholder="Enter official action note, dispatch directives, or status update rationale..."
+                    className="w-full text-xs border border-slate-300 rounded p-2 focus:ring-1 focus:ring-blue-700"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  {actionSuccessMsg ? (
+                    <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {actionSuccessMsg}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-500">
+                      Changes immediately persist to database and sync across the entire portal.
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={isSavingAction}
+                    onClick={handleSaveOfficerAction}
+                    className="px-4 py-1.5 rounded bg-blue-800 hover:bg-blue-900 disabled:opacity-50 text-white font-bold text-xs shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isSavingAction ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Save Action to Database</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 

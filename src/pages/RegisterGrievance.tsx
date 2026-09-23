@@ -1,17 +1,65 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FileText, ArrowLeft, CheckCircle2, Upload, AlertCircle, Shield } from 'lucide-react'
+import { FileText, ArrowLeft, CheckCircle2, Upload, AlertCircle, Shield, RefreshCw } from 'lucide-react'
+import { getApiBaseUrl } from '../saathi/config/api'
 
 export const RegisterGrievance: React.FC = () => {
   const [submitted, setSubmitted] = useState(false)
   const [token, setToken] = useState('')
   const [role, setRole] = useState<'victim' | 'informer' | 'ngo'>('victim')
+  const [fullName, setFullName] = useState('Rameshwar Kumar')
+  const [mobile, setMobile] = useState('9876543210')
+  const [community, setCommunity] = useState('Scheduled Caste (SC)')
+  const [address, setAddress] = useState('Village Ramgarh, Post Office Kalan')
+  const [pinCode, setPinCode] = useState('201001')
+  const [stateName, setStateName] = useState('Uttar Pradesh')
+  const [district, setDistrict] = useState('Ghaziabad')
+  const [policeStation, setPoliceStation] = useState('Kotwali Police Station')
+  const [incidentDate, setIncidentDate] = useState('2026-09-01')
+  const [offenceCategory, setOffenceCategory] = useState('Social Boycott / Denial of Access to Public Resources')
+  const [narrative, setNarrative] = useState(
+    'Complainant was prevented from accessing common drinking water borewell and subjected to caste abuses by local perpetrators. Local police have not registered FIR yet.'
+  )
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    const randomNum = Math.floor(100000 + Math.random() * 900000)
-    setToken(`NHAA-2026-GRV-${randomNum}`)
-    setSubmitted(true)
+    setIsSubmitting(true)
+    setErrorMsg('')
+    try {
+      const fullLocation = [address, district, stateName, pinCode].filter(Boolean).join(', ')
+      const fullNarrative = `Complainant: ${fullName} (${community}, Mobile: ${mobile}). Police Station: ${policeStation}. Incident Details: ${narrative}`
+
+      const res = await fetch(`${getApiBaseUrl()}/api/complaints/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          narrative: fullNarrative,
+          category: offenceCategory,
+          channel: 'web',
+          location: fullLocation,
+          district: `${district}, ${stateName}`,
+          is_anonymous: role === 'informer',
+          incident_time: incidentDate,
+          requested_help: 'Immediate FIR registration under SC/ST PoA Act and police protection.',
+        }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Server returned error ${res.status}`)
+      }
+
+      const data = await res.json()
+      const registeredUrn = data.case_id || data.complaint_code || `NHAA-${Date.now()}`
+      setToken(registeredUrn)
+      setSubmitted(true)
+    } catch (err: any) {
+      console.error('Error submitting grievance:', err)
+      setErrorMsg('Failed to record grievance on the central registry. Please verify backend connection and try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -164,7 +212,8 @@ export const RegisterGrievance: React.FC = () => {
                   type="text"
                   required
                   placeholder="Enter full name"
-                  defaultValue="Rameshwar Kumar"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -177,7 +226,8 @@ export const RegisterGrievance: React.FC = () => {
                   type="tel"
                   required
                   placeholder="10-digit mobile number"
-                  defaultValue="9876543210"
+                  value={mobile}
+                  onChange={(e) => setMobile(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -187,6 +237,8 @@ export const RegisterGrievance: React.FC = () => {
                   Community / Category *
                 </label>
                 <select
+                  value={community}
+                  onChange={(e) => setCommunity(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 >
                   <option>Scheduled Caste (SC)</option>
@@ -203,7 +255,8 @@ export const RegisterGrievance: React.FC = () => {
                   type="text"
                   required
                   placeholder="House number, Street, Village/Town"
-                  defaultValue="Village Ramgarh, Post Office Kalan"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -215,7 +268,8 @@ export const RegisterGrievance: React.FC = () => {
                 <input
                   type="text"
                   placeholder="6-digit PIN"
-                  defaultValue="201001"
+                  value={pinCode}
+                  onChange={(e) => setPinCode(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -234,6 +288,8 @@ export const RegisterGrievance: React.FC = () => {
                   State / UT *
                 </label>
                 <select
+                  value={stateName}
+                  onChange={(e) => setStateName(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 >
                   <option>Uttar Pradesh</option>
@@ -254,7 +310,8 @@ export const RegisterGrievance: React.FC = () => {
                 <input
                   type="text"
                   required
-                  defaultValue="Ghaziabad"
+                  value={district}
+                  onChange={(e) => setDistrict(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -266,7 +323,8 @@ export const RegisterGrievance: React.FC = () => {
                 <input
                   type="text"
                   required
-                  defaultValue="Kotwali Police Station"
+                  value={policeStation}
+                  onChange={(e) => setPoliceStation(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -278,7 +336,8 @@ export const RegisterGrievance: React.FC = () => {
                 <input
                   type="date"
                   required
-                  defaultValue="2026-09-01"
+                  value={incidentDate}
+                  onChange={(e) => setIncidentDate(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 />
               </div>
@@ -288,6 +347,8 @@ export const RegisterGrievance: React.FC = () => {
                   Nature of Atrocity / Act Offence
                 </label>
                 <select
+                  value={offenceCategory}
+                  onChange={(e) => setOffenceCategory(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                 >
                   <option>Social Boycott / Denial of Access to Public Resources</option>
@@ -307,7 +368,8 @@ export const RegisterGrievance: React.FC = () => {
                 <textarea
                   rows={4}
                   required
-                  defaultValue="Complainant was prevented from accessing common drinking water borewell and subjected to caste abuses by local perpetrators. Local police have not registered FIR yet."
+                  value={narrative}
+                  onChange={(e) => setNarrative(e.target.value)}
                   className="w-full text-xs sm:text-sm border border-slate-300 rounded p-3 focus:ring-1 focus:ring-blue-700 focus:outline-hidden"
                   placeholder="Provide precise details including names of accused, witnesses, sequence of events..."
                 />
@@ -338,6 +400,12 @@ export const RegisterGrievance: React.FC = () => {
               </label>
             </div>
 
+            {errorMsg && (
+              <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded font-medium">
+                {errorMsg}
+              </div>
+            )}
+
             <div className="pt-3 border-t border-slate-200 flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-2 text-xs text-amber-800 bg-amber-50 px-3 py-1.5 rounded border border-amber-200">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -346,9 +414,17 @@ export const RegisterGrievance: React.FC = () => {
 
               <button
                 type="submit"
-                className="px-6 py-2.5 bg-[#0f3460] hover:bg-[#162447] text-white font-semibold text-sm rounded shadow-sm transition-colors"
+                disabled={isSubmitting}
+                className="px-6 py-2.5 bg-[#0f3460] hover:bg-[#162447] disabled:opacity-50 text-white font-semibold text-sm rounded shadow-sm transition-colors flex items-center gap-2 cursor-pointer"
               >
-                Submit Grievance Dossier →
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Transmitting to National Registry...</span>
+                  </>
+                ) : (
+                  <span>Submit Grievance Dossier →</span>
+                )}
               </button>
             </div>
           </div>

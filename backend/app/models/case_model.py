@@ -22,4 +22,6 @@ class LiveCase(Base):
     metric_bars_json = Column(Text, nullable=True)
     score_history_json = Column(Text, nullable=True)
     delay_risk_score = Column(Integer, nullable=False, default=15)
+    status = Column(String(50), nullable=True, default="Under Review")
+    priority = Column(String(50), nullable=True, default="MEDIUM")
     created_at = Column(DateTime(timezone=True), server_default=func.now())

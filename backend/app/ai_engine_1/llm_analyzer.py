@@ -89,17 +89,29 @@ LATEST SEGMENT:
 
 
 def _get_llm_api_key() -> Optional[str]:
-    """Get LLM API key from environment (LLM_API_KEY or OPENAI_API_KEY)."""
-    key = os.environ.get("LLM_API_KEY", "").strip()
-    if key:
-        return key
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    return key if key else None
+    """Get LLM API key from environment (GROQ_API_KEY, LLM_API_KEY, or OPENAI_API_KEY)."""
+    for var in ["GROQ_API_KEY", "LLM_API_KEY", "OPENAI_API_KEY"]:
+        k = os.environ.get(var, "").strip()
+        if k:
+            return k
+    return None
 
 
 def _get_llm_base_url() -> Optional[str]:
     url = os.environ.get("OPENAI_BASE_URL", "").strip()
-    return url if url else None
+    if url:
+        return url
+    groq_k = os.environ.get("GROQ_API_KEY", "").strip()
+    if groq_k:
+        return "https://api.groq.com/openai/v1"
+    return None
+
+
+def _get_llm_model() -> str:
+    key = _get_llm_api_key() or ""
+    if key.startswith("gsk_"):
+        return os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b").strip()
+    return os.environ.get("LLM_MODEL", "gpt-4o-mini").strip()
 
 
 async def analyze_transcript_context(
@@ -151,7 +163,7 @@ async def _call_llm(api_key: str, transcript_context: str, latest_segment: str) 
 
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_get_llm_model(),
             messages=[
                 {"role": "system", "content": LLM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
@@ -190,7 +202,7 @@ def _call_llm_sync(api_key: str, transcript_context: str, latest_segment: str) -
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=_get_llm_model(),
             messages=[
                 {"role": "system", "content": LLM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},

@@ -75,7 +75,7 @@ const DIRECT_GROQ_KEY =
   ''
 
 const CONV_GROQ_MODELS = [
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || '',
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_MODEL) || 'openai/gpt-oss-120b',
   'openai/gpt-oss-120b',
   'openai/gpt-oss-20b',
   'groq/compound-mini',
@@ -121,12 +121,12 @@ export async function sendCounsellorMessage(
     console.warn('Backend /api/chat error in conversationService, trying direct OpenRouter:', err)
   }
 
-  const counsellorPrompt = `You are Counsellor C-104 & AI Companion at India's National Helpline (NHAA - 14566).
-Like ChatGPT, answer all user questions engagingly, empathetically, and comprehensively with practical guidance.
-Use friendly expressive emojis (🌟, 🤝, 🛡️, ✨, 💡, 🌙, 📋, 🙏) and natural gestures throughout your response.
-Speak warmly and accurately in the user's language (English, Hindi, or Hinglish).
-Provide clear bullet points and actionable advice for questions on security, rights, stress relief, or general inquiries.
-Keep tone encouraging, non-judgmental, and validating.`
+  const counsellorPrompt = `You are Counsellor C-104 & AI Companion at India's National Helpline (NHAA - 14566), Ministry of Social Justice and Empowerment, Government of India.
+Answer all user questions engagingly, empathetically, and comprehensively with practical, legally sound guidance under the SC/ST PoA Act.
+Use polite, expressive, and reassuring words. Always conclude thoughts and sentences completely.
+Use friendly expressive emojis (🌟, 🤝, 🛡️, ✨, 💡, 🌙, 📋, 🙏) throughout your response.
+Speak warmly and fluently in the user's language (English, Hindi, or Hinglish).
+Provide clear bullet points and actionable advice for questions on security, rights, stress relief, or helpline procedures.`
 
   // 1. Direct Groq AI fallback
   if (DIRECT_GROQ_KEY) {
@@ -145,8 +145,8 @@ Keep tone encouraging, non-judgmental, and validating.`
               ...history.map(t => ({ role: (t.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: t.content })),
               { role: 'user', content: userMessage }
             ],
-            max_tokens: 450,
-            temperature: 0.6,
+            max_tokens: 1200,
+            temperature: 0.5,
           }),
         })
         if (directRes.ok) {
@@ -179,8 +179,8 @@ Keep tone encouraging, non-judgmental, and validating.`
             ...history.map(t => ({ role: (t.role === 'ai' ? 'assistant' : 'user') as 'user' | 'assistant', content: t.content })),
             { role: 'user', content: userMessage }
           ],
-          max_tokens: 400,
-          temperature: 0.6,
+          max_tokens: 1200,
+          temperature: 0.5,
         }),
       })
       if (directRes.ok) {

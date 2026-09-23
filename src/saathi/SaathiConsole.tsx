@@ -4,14 +4,12 @@ import {
   History,
   Layers,
   Sparkles,
-  FolderOpen,
 } from "lucide-react";
 import { SYNTHETIC_CASES, type CaseRecord } from "./data/caseData";
 import { LiveSessionView } from "./components/LiveSessionView";
 import { Engine2HistoricalView } from "./components/Engine2HistoricalView";
 import { CaseReasoningView } from "./components/CaseReasoningView";
 import { NHAAProtocolsView } from "./components/NHAAProtocolsView";
-import { ChatbotPanel } from "./components/ChatbotPanel";
 import { getApiBaseUrl } from "./config/api";
 
 type ActiveTab = "live_session" | "engine2" | "reasoning" | "protocols";
@@ -31,7 +29,7 @@ export const SaathiConsole: React.FC<SaathiConsoleProps> = ({
   const [realCases, setRealCases] = useState<CaseRecord[]>([]);
   const [liveCase, setLiveCase] = useState<CaseRecord | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const isDemoMode = false;
   const [backendStatus, setBackendStatus] = useState<string>("Checking...");
 
   // Active cases: in demo mode show synthetic cases; in live mode show live active case and real database records.
@@ -42,7 +40,16 @@ export const SaathiConsole: React.FC<SaathiConsoleProps> = ({
 
   // Selected case derived from live active session, user selection, or latest authentic case
   const currentCase: CaseRecord | null = selectedCaseId
-    ? activeCases.find((c) => c.id === selectedCaseId) || (liveCase?.id === selectedCaseId ? liveCase : null) || (activeCases.length > 0 ? activeCases[0] : null)
+    ? activeCases.find(
+        (c) =>
+          c.id === selectedCaseId ||
+          c.caseNumber === selectedCaseId ||
+          c.caseNumber === `#${selectedCaseId}` ||
+          `#${c.caseNumber}` === selectedCaseId ||
+          c.session_id === selectedCaseId
+      ) ||
+      (liveCase?.id === selectedCaseId ? liveCase : null) ||
+      (activeCases.length > 0 ? activeCases[0] : null)
     : (liveCase || (activeCases.length > 0 ? activeCases[0] : null));
 
   // Fetch real saved cases from backend API
@@ -56,7 +63,19 @@ export const SaathiConsole: React.FC<SaathiConsoleProps> = ({
         if (data && data.cases) {
           setRealCases(data.cases);
           if (targetCaseId) {
-            setSelectedCaseId(targetCaseId);
+            const matched = data.cases.find(
+              (c: any) =>
+                c.id === targetCaseId ||
+                c.caseNumber === targetCaseId ||
+                c.caseNumber === `#${targetCaseId}` ||
+                `#${c.caseNumber}` === targetCaseId ||
+                c.session_id === targetCaseId
+            );
+            if (matched) {
+              setSelectedCaseId(matched.id);
+            } else {
+              setSelectedCaseId(targetCaseId);
+            }
           } else if (data.cases.length > 0 && !selectedCaseId && !isDemoMode && !liveCase) {
             setSelectedCaseId(data.cases[0].id);
           }
@@ -154,19 +173,6 @@ export const SaathiConsole: React.FC<SaathiConsoleProps> = ({
               <span className="font-bold text-slate-200">{initialVictimName}</span>
             </div>
           )}
-
-          <button
-            type="button"
-            onClick={() => setIsDemoMode(!isDemoMode)}
-            className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-colors flex items-center gap-1.5 ${
-              isDemoMode
-                ? "bg-amber-500/20 text-amber-300 border-amber-500/40 font-bold"
-                : "bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700"
-            }`}
-          >
-            <FolderOpen className="w-3.5 h-3.5" />
-            <span>{isDemoMode ? "Synthetic Demo Active" : "Live Session Mode"}</span>
-          </button>
 
           {onBackToQueue && (
             <button
@@ -274,9 +280,6 @@ export const SaathiConsole: React.FC<SaathiConsoleProps> = ({
 
         {activeTab === "protocols" && <NHAAProtocolsView />}
       </div>
-
-      {/* Integrated Floating SAATHI-AI Assistant */}
-      <ChatbotPanel currentCase={currentCase} />
     </div>
   );
 };

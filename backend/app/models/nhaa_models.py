@@ -331,3 +331,37 @@ class AuditLog(Base):
 
     case = relationship("Case", back_populates="audit_logs")
     actor = relationship("User", back_populates="audit_logs")
+
+
+# ==============================================================================
+# 10. WEBAUTHN / BIOMETRIC PASSKEY CREDENTIALS
+# ==============================================================================
+class WebAuthnCredential(Base):
+    __tablename__ = "webauthn_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    credential_id = Column(String(512), unique=True, index=True, nullable=False)
+    public_key = Column(Text, nullable=True)
+    device_name = Column(String(100), default="Windows Hello / Platform Biometric")
+    transports = Column(String(100), default="internal")
+    sign_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User")
+
+
+# ==============================================================================
+# 11. BROWSER CAMERA BIOMETRIC FACE PROFILES
+# ==============================================================================
+class AdminFaceProfile(Base):
+    __tablename__ = "admin_face_profiles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(100), unique=True, index=True, nullable=False)
+    # Stored as JSON list of 128 floating point descriptor numbers (no raw photo)
+    embedding_json = Column(Text, nullable=False)
+    liveness_score = Column(Float, default=1.0)
+    device_info = Column(String(200), default="Browser Webcam")
+    enrolled_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+

@@ -4,10 +4,13 @@ Configured for SQLite by default, with seamless environment-variable configurati
 """
 
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./saathi_dev.db")
+ROOT_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_SQLITE_PATH = (ROOT_DIR / "saathi_dev.db").as_posix()
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH}")
 
 # Automatically fix PostgreSQL dialect prefix if provided as postgres:// by cloud providers (e.g. Render/Heroku)
 if DATABASE_URL.startswith("postgres://"):
