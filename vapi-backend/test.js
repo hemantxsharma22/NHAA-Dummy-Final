@@ -122,6 +122,82 @@ async function runTests() {
     process.exit(1);
   }
 
+  console.log('\n--- 5. Testing speech-update (MUST NOT emit phone-transcript) ---');
+  let speechUpdateEmitted = false;
+  const speechUpdateListener = () => {
+    speechUpdateEmitted = true;
+  };
+  socket.on('phone-transcript', speechUpdateListener);
+
+  const speechRes = await fetch(`${BASE_URL}/api/vapi-webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: {
+        type: 'speech-update',
+        status: 'started',
+        role: 'user',
+        transcript: 'AI: Old text\nUser: Old text',
+      },
+    }),
+  });
+  const speechJson = await speechRes.json();
+  console.log('Speech-update Response:', speechJson);
+
+  await sleep(500);
+  socket.off('phone-transcript', speechUpdateListener);
+
+  if (speechUpdateEmitted) {
+    console.error('❌ speech-update illegally emitted a transcript!');
+    process.exit(1);
+  } else {
+    console.log('✅ speech-update correctly ignored cumulative transcript!');
+  }
+
+  console.log('\n--- 6. Testing multi-line transcript string fallback ---');
+  const multiLinePromise = new Promise((resolve, reject) => {
+    const lines = [];
+    const timeout = setTimeout(() => reject(new Error('Timeout waiting for multi-line parsed events')), 5000);
+
+    socket.on('phone-transcript', (data) => {
+      lines.push(data);
+      if (lines.length === 2) {
+        clearTimeout(timeout);
+        resolve(lines);
+      }
+    });
+  });
+
+  const mlRes = await fetch(`${BASE_URL}/api/vapi-webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: {
+        type: 'status-update',
+        call: { id: 'test_call_ml_1' },
+        transcript: "AI: How can I help you?\nUser: I am in danger right now.",
+      },
+    }),
+  });
+  const mlJson = await mlRes.json();
+  console.log('Multi-line fallback Response:', mlJson);
+
+  const parsedLines = await multiLinePromise;
+  console.log('✅ Received parsed multi-line turns:', parsedLines);
+
+  if (
+    parsedLines.length === 2 &&
+    parsedLines[0].role === 'assistant' &&
+    parsedLines[0].text === 'How can I help you?' &&
+    parsedLines[1].role === 'user' &&
+    parsedLines[1].text === 'I am in danger right now.'
+  ) {
+    console.log('✅ Multi-line transcript parsing succeeded!');
+  } else {
+    console.error('❌ Multi-line parsing failed:', parsedLines);
+    process.exit(1);
+  }
+
   socket.disconnect();
   console.log('\n🎉 ALL TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);

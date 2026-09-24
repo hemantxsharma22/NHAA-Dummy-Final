@@ -531,30 +531,47 @@ export function LiveSessionView({
     // Listen for phone-transcript events from Vapi webhook backend
     socket.on("phone-transcript", (data: { text: string; role?: string; timestamp?: number }) => {
       if (!data || !data.text) return;
-      console.log("[LiveSessionView] phone-transcript event received:", data);
 
-      const roleLower = (data.role || "user").toLowerCase();
-      // Label "Caller" or "AI" based on the role
-      const speakerLabel = roleLower === "assistant" || roleLower === "ai" ? "AI" : "Caller";
+      const rawRole = (data.role || "user").toLowerCase();
+      const isAssistant = rawRole === "assistant" || rawRole === "ai" || rawRole === "bot";
+      const speakerLabel = isAssistant ? "AI" : "Caller";
+      const cleanText = data.text.trim();
+
       const formattedTime = new Date(data.timestamp || Date.now()).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       });
 
-      // Append transcript to existing transcript state
-      setTranscriptEntries((prev) => [
-        ...prev,
-        {
-          id: `phone-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          text: data.text.trim(),
-          timestamp: formattedTime,
-          isFinal: true,
-          speaker: speakerLabel as any,
-        },
-      ]);
+      console.log(
+        `[LiveSessionView] phone-transcript received -> extracted role: "${data.role}" (${speakerLabel}) | text: "${cleanText}"`
+      );
 
-      // Call SVI scoring function on every new transcript chunk
-      scoreTranscriptChunk(data.text);
+      // Append transcript to existing transcript state (preventing exact consecutive duplicate appends)
+      setTranscriptEntries((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.speaker === speakerLabel && last.text === cleanText) {
+          return prev;
+        }
+        return [
+          ...prev,
+          {
+            id: `phone-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            text: cleanText,
+            timestamp: formattedTime,
+            isFinal: true,
+            speaker: speakerLabel as any,
+          },
+        ];
+      });
+
+      // CRITICAL FOR SVI: Only actual CALLER/USER speech should be passed into caller-risk/SVI scoring logic.
+      // AI/assistant messages MUST NOT affect the caller's threat score.
+      if (!isAssistant) {
+        console.log(`[LiveSessionView] -> Sent to SVI scoring (Caller Speech): "${cleanText}"`);
+        scoreTranscriptChunk(cleanText);
+      } else {
+        console.log(`[LiveSessionView] -> Ignored for SVI scoring (AI / Assistant Speech): "${cleanText}"`);
+      }
     });
 
     // Disconnect the socket on component unmount (cleanup)
