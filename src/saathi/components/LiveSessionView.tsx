@@ -414,6 +414,7 @@ export function LiveSessionView({
         });
         const res = await fetch(`${getApiBaseUrl()}/api/sessions/start?${params.toString()}`, {
           method: "POST",
+          signal: AbortSignal.timeout(2000),
         });
         if (res.ok) {
           const data = await res.json();
@@ -422,7 +423,7 @@ export function LiveSessionView({
           setIsSessionActive(true);
         }
       } catch (err: any) {
-        console.warn("Could not start API session for scoring:", err);
+        console.warn("Could not start API session for scoring:", err?.message || err);
       }
     }
 
@@ -432,6 +433,7 @@ export function LiveSessionView({
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({ text: phraseText }),
+          signal: AbortSignal.timeout(2000),
         });
 
         if (res.ok) {

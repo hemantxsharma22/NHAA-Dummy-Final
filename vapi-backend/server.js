@@ -64,6 +64,9 @@ app.get('/', (_req, res) => {
   });
 });
 
+// Keep track of emitted messages to avoid broadcasting duplicates from conversation-update histories
+const emittedMessageKeys = new Set();
+
 /**
  * POST /api/vapi-webhook
  * Endpoint to receive Vapi voice AI server-side webhook events
@@ -75,39 +78,150 @@ app.post('/api/vapi-webhook', (req, res) => {
     // Vapi webhook events may wrap details inside `message` or directly at root
     const message = body.message || body;
     const eventType = message.type || body.type;
+    const callId = message.call?.id || body.call?.id || message.callId || body.callId || 'call';
 
-    console.log(`[Vapi Webhook] Received event type: ${eventType || 'unknown'}`);
+    console.log(
+      `[Vapi Webhook] Received event type: "${eventType || 'unknown'}" | Active Socket Clients: ${io.engine.clientsCount}`
+    );
 
-    // Check if event type is "transcript"
+    let emittedCount = 0;
+
+    // 1. Direct transcript event
     if (eventType === 'transcript') {
       const transcriptText = message.transcript || message.text || '';
-      const rawRole = (message.role || 'user').toLowerCase();
-      const role = rawRole === 'assistant' ? 'assistant' : 'user';
+      if (transcriptText) {
+        const rawRole = (message.role || 'user').toLowerCase();
+        const role = rawRole === 'assistant' || rawRole === 'bot' || rawRole === 'ai' ? 'assistant' : 'user';
 
+        const transcriptPayload = {
+          text: typeof transcriptText === 'string' ? transcriptText.trim() : String(transcriptText),
+          role: role,
+          timestamp: message.timestamp ? Number(message.timestamp) : Date.now(),
+        };
+
+        io.emit('phone-transcript', transcriptPayload);
+        emittedCount++;
+        console.log(`[Vapi Webhook] Emitted phone-transcript (${transcriptPayload.role}): "${transcriptPayload.text}"`);
+
+        return res.status(200).json({
+          success: true,
+          message: 'Transcript processed and broadcasted',
+          data: transcriptPayload,
+        });
+      }
+    }
+
+    // 2. conversation-update event (Contains conversation history and turns)
+    if (eventType === 'conversation-update') {
+      const messagesList =
+        message.conversation?.messages ||
+        message.messages ||
+        message.messagesOpenAIFormatted ||
+        body.conversation?.messages ||
+        body.messages ||
+        [];
+
+      console.log(`[Vapi Webhook] conversation-update: found ${messagesList.length} total message(s) in history`);
+
+      messagesList.forEach((msg, idx) => {
+        const rawRole = (msg.role || 'user').toLowerCase();
+        // Skip system prompts, internal tool calls, or function messages
+        if (rawRole === 'system' || rawRole === 'tool' || rawRole === 'function') {
+          return;
+        }
+
+        const role = rawRole === 'assistant' || rawRole === 'bot' || rawRole === 'ai' ? 'assistant' : 'user';
+        const rawText = msg.message || msg.content || msg.text || '';
+        const text = typeof rawText === 'string' ? rawText.trim() : String(rawText).trim();
+
+        if (!text) return;
+
+        // Unique signature for this turn in the conversation
+        const key = `${callId}-${idx}-${role}-${text}`;
+
+        if (!emittedMessageKeys.has(key)) {
+          emittedMessageKeys.add(key);
+
+          // Bound cache size to prevent memory leaks over long uptimes
+          if (emittedMessageKeys.size > 2000) {
+            const firstKey = emittedMessageKeys.values().next().value;
+            emittedMessageKeys.delete(firstKey);
+          }
+
+          const transcriptPayload = {
+            text: text,
+            role: role,
+            timestamp: msg.time ? Number(msg.time) : (msg.timestamp ? Number(msg.timestamp) : Date.now()),
+          };
+
+          io.emit('phone-transcript', transcriptPayload);
+          emittedCount++;
+          console.log(
+            `[Vapi Webhook] Emitted phone-transcript from conversation-update (${role}): "${text}"`
+          );
+        }
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: `Processed conversation-update: emitted ${emittedCount} new turn(s)`,
+        emittedCount,
+      });
+    }
+
+    // 3. speech-update event (Speech status notifications: started / stopped)
+    if (eventType === 'speech-update') {
+      const speechRole = (message.role || body.role || 'user').toLowerCase();
+      const speechStatus = message.status || body.status || 'unknown';
+      console.log(`[Vapi Webhook] speech-update: role=${speechRole}, status=${speechStatus}`);
+
+      // If text/transcript is attached in speech-update, broadcast it
+      const inlineText = message.transcript || message.text || message.content;
+      if (inlineText && typeof inlineText === 'string' && inlineText.trim()) {
+        const role = speechRole === 'assistant' || speechRole === 'bot' || speechRole === 'ai' ? 'assistant' : 'user';
+        const transcriptPayload = {
+          text: inlineText.trim(),
+          role: role,
+          timestamp: Date.now(),
+        };
+
+        io.emit('phone-transcript', transcriptPayload);
+        emittedCount++;
+        console.log(`[Vapi Webhook] Emitted phone-transcript from speech-update (${role}): "${inlineText.trim()}"`);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `Processed speech-update (${speechRole}: ${speechStatus})`,
+        status: speechStatus,
+      });
+    }
+
+    // 4. Fallback for any other event containing transcript or text
+    const fallbackText = message.transcript || message.text;
+    if (fallbackText && typeof fallbackText === 'string' && fallbackText.trim()) {
+      const rawRole = (message.role || 'user').toLowerCase();
+      const role = rawRole === 'assistant' || rawRole === 'bot' || rawRole === 'ai' ? 'assistant' : 'user';
       const transcriptPayload = {
-        text: typeof transcriptText === 'string' ? transcriptText.trim() : String(transcriptText),
+        text: fallbackText.trim(),
         role: role,
         timestamp: Date.now(),
       };
 
-      // Emit "phone-transcript" event to all connected Socket.io clients
       io.emit('phone-transcript', transcriptPayload);
-
-      console.log(
-        `[Vapi Webhook] Emitted phone-transcript (${transcriptPayload.role}): "${transcriptPayload.text}"`
-      );
+      console.log(`[Vapi Webhook] Emitted phone-transcript from fallback (${role}): "${transcriptPayload.text}"`);
 
       return res.status(200).json({
         success: true,
-        message: 'Transcript processed and broadcasted',
+        message: `Event '${eventType}' transcript broadcasted`,
         data: transcriptPayload,
       });
     }
 
-    // Acknowledge other event types (e.g. call-start, end-of-call-report, status-update)
+    // Acknowledge other lifecycle events (call-start, status-update, end-of-call-report, etc.)
     return res.status(200).json({
       success: true,
-      message: `Event '${eventType || 'unspecified'}' received successfully`,
+      message: `Event '${eventType || 'unspecified'}' received and acknowledged`,
     });
   } catch (error) {
     console.error('[Vapi Webhook Error]:', error);

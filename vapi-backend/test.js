@@ -74,6 +74,54 @@ async function runTests() {
     process.exit(1);
   }
 
+  console.log('\n--- 4. Testing POST /api/vapi-webhook with conversation-update ---');
+  const conversationPromise = new Promise((resolve, reject) => {
+    const received = [];
+    const timeout = setTimeout(() => reject(new Error('Timeout waiting for conversation-update events')), 5000);
+
+    socket.on('phone-transcript', (data) => {
+      received.push(data);
+      if (received.length === 2) {
+        clearTimeout(timeout);
+        resolve(received);
+      }
+    });
+  });
+
+  const convRes = await fetch(`${BASE_URL}/api/vapi-webhook`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: {
+        type: 'conversation-update',
+        call: { id: 'test_call_99' },
+        messages: [
+          { role: 'system', message: 'You are a test assistant' },
+          { role: 'user', message: 'Mujhe madad chahiye' },
+          { role: 'assistant', message: 'Ji boliye, main aapki kya madad kar sakti hoon?' },
+        ],
+      },
+    }),
+  });
+
+  const convJson = await convRes.json();
+  console.log('Conversation Webhook Response:', convJson);
+
+  const convMessages = await conversationPromise;
+  console.log('✅ Received conversation-update transcripts:', convMessages);
+
+  if (
+    convMessages.length === 2 &&
+    convMessages[0].role === 'user' &&
+    convMessages[0].text === 'Mujhe madad chahiye' &&
+    convMessages[1].role === 'assistant'
+  ) {
+    console.log('✅ conversation-update verification succeeded!');
+  } else {
+    console.error('❌ conversation-update mismatch:', convMessages);
+    process.exit(1);
+  }
+
   socket.disconnect();
   console.log('\n🎉 ALL TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
