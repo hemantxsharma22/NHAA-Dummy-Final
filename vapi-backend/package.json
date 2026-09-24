@@ -1,0 +1,30 @@
+{
+  "name": "vapi-backend",
+  "version": "1.0.0",
+  "description": "Node.js + Express backend with Socket.io for Vapi Voice AI Webhooks",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "vapi",
+    "voice-ai",
+    "socket.io",
+    "express",
+    "webhooks"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}
