@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { io, Socket } from "socket.io-client";
 import {
   Mic,
   Square,
@@ -67,7 +68,7 @@ interface TranscriptEntry {
   text: string;
   timestamp: string;
   isFinal: boolean;
-  speaker?: "CALLER" | "OPERATOR";
+  speaker?: "CALLER" | "OPERATOR" | "Caller" | "AI" | string;
   category?: string;
   category_label?: string;
 }
@@ -329,12 +330,237 @@ export function LiveSessionView({
   const audioStreamRef = useRef<MediaStream | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Synchronized refs to avoid stale closures in WebSocket event listeners
+  const sessionIdRef = useRef<string | null>(null);
+  const isSessionActiveRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    isSessionActiveRef.current = isSessionActive;
+  }, [isSessionActive]);
+
   // In-place auto-scroll for transcript container ONLY (prevents main page scroll jumping)
   useEffect(() => {
     if (transcriptContainerRef.current) {
       transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
     }
   }, [transcriptEntries, interimText]);
+
+  /**
+   * Evaluates text using client-side heuristic rules to ensure the SVI gauge updates
+   * even if the Python FastAPI backend is offline or slow to respond.
+   */
+  const evaluateLocalSvi = (text: string) => {
+    const lower = text.toLowerCase();
+    let delta = 0;
+
+    const highThreat = [
+      "maar", "kill", "dhamki", "threat", "khoon", "blood", "chaku", "knife",
+      "gun", "bandook", "murder", "hamla", "jaan se", "attack", "destroy"
+    ];
+    const moderateDistress = [
+      "darr", "dar", "fear", "scared", "panic", "bachao", "help", "madad",
+      "police", "emergency", "bahar khada", "outside", "alone", "akela", "akeli"
+    ];
+    const calmingSignals = [
+      "safe", "theek", "shant", "calm", "police aa gayi", "alright", "okay", "fine"
+    ];
+
+    if (highThreat.some((kw) => lower.includes(kw))) {
+      delta += 30;
+    } else if (moderateDistress.some((kw) => lower.includes(kw))) {
+      delta += 18;
+    } else if (calmingSignals.some((kw) => lower.includes(kw))) {
+      delta -= 15;
+    } else {
+      delta += 4;
+    }
+
+    setSviScore((prev) => {
+      const nextScore = Math.min(100, Math.max(5, prev + delta));
+      const nextLabel =
+        nextScore >= 80 ? "CRITICAL" : nextScore >= 60 ? "HIGH" : nextScore >= 35 ? "MODERATE" : "LOW";
+      setSviLabel(nextLabel);
+
+      setScoreHistory((prevHistory) => [
+        ...prevHistory,
+        {
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          score: nextScore,
+          label: nextLabel,
+          trigger_text: text.slice(0, 30),
+        },
+      ]);
+
+      return nextScore;
+    });
+  };
+
+  /**
+   * SVI scoring function called on every new transcript chunk
+   * Streams to backend Engine 1 segment API and updates SVI score gauge and indicators.
+   */
+  const scoreTranscriptChunk = async (phraseText: string) => {
+    let targetSessionId = sessionIdRef.current;
+    if (!targetSessionId || !isSessionActiveRef.current) {
+      try {
+        const params = new URLSearchParams({
+          operator_name: operatorName,
+          district: district,
+          language: selectedLanguage,
+        });
+        const res = await fetch(`${getApiBaseUrl()}/api/sessions/start?${params.toString()}`, {
+          method: "POST",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          targetSessionId = data.session_id;
+          setSessionId(targetSessionId);
+          setIsSessionActive(true);
+        }
+      } catch (err: any) {
+        console.warn("Could not start API session for scoring:", err);
+      }
+    }
+
+    if (targetSessionId) {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/api/sessions/${targetSessionId}/segment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ text: phraseText }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+
+          if (typeof data.svi === "number") {
+            setSviScore(data.svi);
+            setSviLabel(data.svi_label || "LOW");
+          } else if (data.svi && typeof data.svi === "object") {
+            setSviScore(data.svi.score ?? 0);
+            setSviLabel(data.svi.label ?? data.svi_label ?? "LOW");
+          }
+
+          if (data.chunk_count) setChunkCount(data.chunk_count);
+          if (data.metric_bars && Array.isArray(data.metric_bars)) setMetricBars(data.metric_bars);
+          if (data.speech_pace_label) setSpeechPaceLabel(data.speech_pace_label);
+          if (data.indicators && Array.isArray(data.indicators)) setIndicators(data.indicators);
+          if (data.copilot) setCopilot(data.copilot);
+          if (data.score_history && Array.isArray(data.score_history)) setScoreHistory(data.score_history);
+
+          if (
+            data.detected_location &&
+            (data.detected_location.city ||
+              data.detected_location.street ||
+              data.detected_location.district ||
+              data.detected_location.state)
+          ) {
+            setDetectedLocation({
+              street: data.detected_location.street,
+              city: data.detected_location.city,
+              district: data.detected_location.district,
+              state: data.detected_location.state,
+            });
+            const disp =
+              data.detected_location.city ||
+              data.detected_location.district ||
+              data.detected_location.street ||
+              "";
+            if (disp) {
+              setDistrict(disp);
+            }
+          } else if (data.case_record) {
+            if (data.case_record.city || data.case_record.district || data.case_record.street) {
+              setDetectedLocation({
+                street: data.case_record.street,
+                city: data.case_record.city,
+                district: data.case_record.district,
+                state: data.case_record.state,
+              });
+              if (data.case_record.location) {
+                setDistrict(data.case_record.location);
+              }
+            }
+            if (onLiveUpdate) {
+              onLiveUpdate(data.case_record);
+            }
+          }
+          return;
+        }
+      } catch (err: any) {
+        console.warn("API session segment call failed, falling back to local heuristic SVI:", err);
+      }
+    }
+
+    // Fallback: Local heuristic scoring ensures gauge updates smoothly
+    evaluateLocalSvi(phraseText);
+  };
+
+  /**
+   * Socket.io client setup:
+   * Connects to backend WebSocket server on component mount,
+   * listens for 'phone-transcript' events, and disconnects on unmount.
+   */
+  useEffect(() => {
+    const backendUrl =
+      (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_BACKEND_URL) ||
+      "http://localhost:5000";
+
+    console.log("[LiveSessionView] Connecting Socket.io to backend:", backendUrl);
+
+    const socket: Socket = io(backendUrl, {
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    });
+
+    socket.on("connect", () => {
+      console.log("[LiveSessionView] Socket.io connected to phone transcript server, ID:", socket.id);
+    });
+
+    socket.on("connect_error", (error) => {
+      console.warn("[LiveSessionView] Socket.io connection error:", error.message);
+    });
+
+    // Listen for phone-transcript events from Vapi webhook backend
+    socket.on("phone-transcript", (data: { text: string; role?: string; timestamp?: number }) => {
+      if (!data || !data.text) return;
+      console.log("[LiveSessionView] phone-transcript event received:", data);
+
+      const roleLower = (data.role || "user").toLowerCase();
+      // Label "Caller" or "AI" based on the role
+      const speakerLabel = roleLower === "assistant" || roleLower === "ai" ? "AI" : "Caller";
+      const formattedTime = new Date(data.timestamp || Date.now()).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+
+      // Append transcript to existing transcript state
+      setTranscriptEntries((prev) => [
+        ...prev,
+        {
+          id: `phone-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          text: data.text.trim(),
+          timestamp: formattedTime,
+          isFinal: true,
+          speaker: speakerLabel as any,
+        },
+      ]);
+
+      // Call SVI scoring function on every new transcript chunk
+      scoreTranscriptChunk(data.text);
+    });
+
+    // Disconnect the socket on component unmount (cleanup)
+    return () => {
+      console.log("[LiveSessionView] Disconnecting Socket.io on unmount");
+      socket.disconnect();
+    };
+  }, []);
 
   const startLiveSession = async () => {
     try {
@@ -594,91 +820,12 @@ export function LiveSessionView({
   };
 
   const handleSendTestPhrase = async (phraseText: string) => {
-    let targetSessionId = sessionId;
-    if (!targetSessionId || !isSessionActive) {
-      try {
-        const params = new URLSearchParams({
-          operator_name: operatorName,
-          district: district,
-          language: selectedLanguage,
-        });
-        const res = await fetch(`${getApiBaseUrl()}/api/sessions/start?${params.toString()}`, {
-          method: "POST",
-        });
-        if (!res.ok) throw new Error("Could not start session for test phrase");
-        const data = await res.json();
-        targetSessionId = data.session_id;
-        setSessionId(targetSessionId);
-        setIsSessionActive(true);
-      } catch (err: any) {
-        console.error("Failed to start session for test phrase:", err);
-        setStatusNotice(`Could not start session: ${err.message}`);
-        return;
-      }
-    }
-
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/api/sessions/${targetSessionId}/segment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ text: phraseText }),
-      });
-
-      if (!res.ok) throw new Error("Failed to post text segment");
-      const data = await res.json();
-
-      const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setTranscriptEntries((prev) => [
-        ...prev,
-        { id: `t-${Date.now()}`, text: phraseText, timestamp: nowTime, isFinal: true, speaker: "CALLER" },
-      ]);
-
-      if (typeof data.svi === "number") {
-        setSviScore(data.svi);
-        setSviLabel(data.svi_label || "LOW");
-      } else if (data.svi && typeof data.svi === "object") {
-        setSviScore(data.svi.score ?? 0);
-        setSviLabel(data.svi.label ?? data.svi_label ?? "LOW");
-      }
-
-      if (data.chunk_count) setChunkCount(data.chunk_count);
-      if (data.metric_bars && Array.isArray(data.metric_bars)) setMetricBars(data.metric_bars);
-      if (data.speech_pace_label) setSpeechPaceLabel(data.speech_pace_label);
-      if (data.indicators && Array.isArray(data.indicators)) setIndicators(data.indicators);
-      if (data.copilot) setCopilot(data.copilot);
-      if (data.score_history && Array.isArray(data.score_history)) setScoreHistory(data.score_history);
-
-      if (data.detected_location && (data.detected_location.city || data.detected_location.street || data.detected_location.district || data.detected_location.state)) {
-        setDetectedLocation({
-          street: data.detected_location.street,
-          city: data.detected_location.city,
-          district: data.detected_location.district,
-          state: data.detected_location.state,
-        });
-        const disp = data.detected_location.city || data.detected_location.district || data.detected_location.street || "";
-        if (disp) {
-          setDistrict(disp);
-        }
-      } else if (data.case_record) {
-        if (data.case_record.city || data.case_record.district || data.case_record.street) {
-          setDetectedLocation({
-            street: data.case_record.street,
-            city: data.case_record.city,
-            district: data.case_record.district,
-            state: data.case_record.state,
-          });
-          if (data.case_record.location) {
-            setDistrict(data.case_record.location);
-          }
-        }
-        if (onLiveUpdate) {
-          onLiveUpdate(data.case_record);
-        }
-      }
-    } catch (err: any) {
-      console.error("Test phrase submit error:", err);
-      setStatusNotice(`Failed to send phrase: ${err.message}`);
-    }
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setTranscriptEntries((prev) => [
+      ...prev,
+      { id: `t-${Date.now()}`, text: phraseText, timestamp: nowTime, isFinal: true, speaker: "CALLER" },
+    ]);
+    await scoreTranscriptChunk(phraseText);
   };
 
   const endLiveSession = async () => {
@@ -1046,26 +1193,37 @@ export function LiveSessionView({
             >
               {transcriptEntries.length > 0 || interimText ? (
                 <div className="space-y-2.5">
-                  {transcriptEntries.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="p-2.5 rounded bg-[#F9FAFB] border border-[#E5E7EB] space-y-1"
-                    >
-                      <div className="flex items-center justify-between text-[10px] font-bold">
-                        <span className="text-[#6B7280] font-mono">
-                          {entry.timestamp} [{entry.speaker || "CALLER"}]
-                        </span>
-                        {entry.category_label && (
-                          <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-[#FDF2F2] text-[#C81E1E] border border-[#F8B4B4]">
-                            DETECTED: {entry.category_label}
+                  {transcriptEntries.map((entry) => {
+                    const isAI = entry.speaker === "AI" || entry.speaker === "OPERATOR";
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`p-2.5 rounded border space-y-1 ${
+                          isAI
+                            ? "bg-[#F0FDF4] border-[#BBF7D0]"
+                            : "bg-[#F9FAFB] border-[#E5E7EB]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[10px] font-bold">
+                          <span
+                            className={`font-mono ${
+                              isAI ? "text-[#15803D]" : "text-[#6B7280]"
+                            }`}
+                          >
+                            {entry.timestamp} [{entry.speaker || "CALLER"}]
                           </span>
-                        )}
+                          {entry.category_label && (
+                            <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-[#FDF2F2] text-[#C81E1E] border border-[#F8B4B4]">
+                              DETECTED: {entry.category_label}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-[#111827] font-medium font-serif-header">
+                          "{entry.text}"
+                        </p>
                       </div>
-                      <p className="text-xs text-[#111827] font-medium font-serif-header">
-                        "{entry.text}"
-                      </p>
-                    </div>
-                  ))}
+                    );
+                  })}
 
                   {/* Real-time Interim Captions */}
                   {interimText && (
