@@ -629,6 +629,8 @@ async def receive_text_segment(
     text: Optional[str] = Query(default=None),
     chunk_duration: float = Query(default=3.5),
     stt_source: str = Query(default="live_speech"),
+    role: Optional[str] = Query(default=None),
+    speaker: Optional[str] = Query(default=None),
 ):
     """
     Receive an incremental finalized text segment directly from real-time speech stream.
@@ -638,6 +640,7 @@ async def receive_text_segment(
     final_text = text
     final_duration = chunk_duration
     final_source = stt_source
+    final_role = role or speaker or "user"
 
     try:
         content_type = request.headers.get("content-type", "")
@@ -649,6 +652,10 @@ async def receive_text_segment(
                     final_duration = float(data.get("chunk_duration", final_duration))
                 if "stt_source" in data:
                     final_source = data.get("stt_source", final_source)
+                if "role" in data:
+                    final_role = data.get("role", final_role)
+                elif "speaker" in data:
+                    final_role = data.get("speaker", final_role)
         elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
             form = await request.form()
             final_text = form.get("text") or final_text
@@ -656,6 +663,10 @@ async def receive_text_segment(
                 final_duration = float(form.get("chunk_duration"))
             if "stt_source" in form:
                 final_source = form.get("stt_source")
+            if "role" in form:
+                final_role = form.get("role") or final_role
+            elif "speaker" in form:
+                final_role = form.get("speaker") or final_role
     except Exception:
         pass
 
@@ -667,6 +678,7 @@ async def receive_text_segment(
         text=final_text,
         chunk_duration_seconds=final_duration,
         stt_source=final_source,
+        role=final_role,
     )
 
     if "error" in result and "not found" in result.get("error", "").lower():

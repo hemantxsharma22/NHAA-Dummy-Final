@@ -67,6 +67,47 @@ app.get('/', (_req, res) => {
 // Keep track of emitted messages to avoid broadcasting duplicates from conversation-update histories
 const emittedMessageKeys = new Set();
 
+// Keep track of ended calls to prevent duplicate phone-call-ended events
+const endedCalls = new Set();
+
+/**
+ * Checks if a webhook payload represents call termination and emits phone-call-ended once per callId
+ */
+function checkAndEmitCallEnded(callId, message, body, eventType) {
+  const isEnded =
+    eventType === 'end-of-call-report' ||
+    eventType === 'call-ended' ||
+    eventType === 'call.ended' ||
+    eventType === 'hang' ||
+    eventType === 'hangup' ||
+    (eventType === 'status-update' && (
+      message.status === 'ended' ||
+      message.status === 'completed' ||
+      message.call?.status === 'ended' ||
+      message.call?.status === 'completed' ||
+      body.status === 'ended' ||
+      body.status === 'completed'
+    )) ||
+    Boolean(message.endedReason || body.endedReason || message.call?.endedReason);
+
+  if (isEnded && !endedCalls.has(callId)) {
+    endedCalls.add(callId);
+    if (endedCalls.size > 1000) {
+      const first = endedCalls.values().next().value;
+      endedCalls.delete(first);
+    }
+    const endReason = message.endedReason || body.endedReason || message.status || 'call-ended';
+    console.log(`[Vapi Webhook] Call ended → emitting phone-call-ended`);
+    io.emit('phone-call-ended', {
+      callId,
+      reason: endReason,
+      timestamp: Date.now(),
+    });
+    return true;
+  }
+  return false;
+}
+
 /**
  * Extracts the message list from any Vapi payload structure.
  * Supports message.conversation (array), message.messages, message.messagesOpenAIFormatted, etc.
@@ -129,7 +170,8 @@ app.post('/api/vapi-webhook', (req, res) => {
           return;
         }
 
-        const role = (rawRole === 'assistant' || rawRole === 'bot' || rawRole === 'ai') ? 'assistant' : 'user';
+        const isAssistantRole = ['assistant', 'bot', 'ai', 'agent', 'model'].includes(rawRole);
+        const role = isAssistantRole ? 'assistant' : 'user';
 
         let text = '';
         if (typeof msg.message === 'string') {
@@ -177,6 +219,9 @@ app.post('/api/vapi-webhook', (req, res) => {
         }
       });
 
+      // If this event indicates the call has ended (e.g. end-of-call-report), emit phone-call-ended after final turns
+      checkAndEmitCallEnded(callId, message, body, eventType);
+
       return res.status(200).json({
         success: true,
         message: `Processed conversation history: emitted ${emittedCount} new turn(s)`,
@@ -197,12 +242,12 @@ app.post('/api/vapi-webhook', (req, res) => {
         let lineRole = null;
         let lineText = '';
 
-        if (/^(AI|Assistant):\s*/i.test(line)) {
+        if (/^(AI|Assistant|Bot|Agent|Model):\s*/i.test(line)) {
           lineRole = 'assistant';
-          lineText = line.replace(/^(AI|Assistant):\s*/i, '').trim();
-        } else if (/^(User|Caller):\s*/i.test(line)) {
+          lineText = line.replace(/^(AI|Assistant|Bot|Agent|Model):\s*/i, '').trim();
+        } else if (/^(User|Caller|Citizen):\s*/i.test(line)) {
           lineRole = 'user';
-          lineText = line.replace(/^(User|Caller):\s*/i, '').trim();
+          lineText = line.replace(/^(User|Caller|Citizen):\s*/i, '').trim();
         }
 
         if (lineRole && lineText) {
@@ -223,6 +268,9 @@ app.post('/api/vapi-webhook', (req, res) => {
         }
       });
 
+      // If this event indicates the call has ended, emit phone-call-ended after turns
+      checkAndEmitCallEnded(callId, message, body, eventType);
+
       return res.status(200).json({
         success: true,
         message: `Parsed transcript string: emitted ${emittedCount} turn(s)`,
@@ -240,7 +288,8 @@ app.post('/api/vapi-webhook', (req, res) => {
         !transcriptText.includes('\nUser:')
       ) {
         const rawRole = (message.role || 'user').toLowerCase().trim();
-        const role = (rawRole === 'assistant' || rawRole === 'ai' || rawRole === 'bot') ? 'assistant' : 'user';
+        const isAssistantRole = ['assistant', 'ai', 'bot', 'agent', 'model'].includes(rawRole);
+        const role = isAssistantRole ? 'assistant' : 'user';
 
         let cleanText = transcriptText.trim();
         if (role === 'assistant' && /^AI:\s*/i.test(cleanText)) {
@@ -271,6 +320,9 @@ app.post('/api/vapi-webhook', (req, res) => {
       }
     }
 
+    // Check if status-update, end-of-call-report or any lifecycle event indicates call ended
+    checkAndEmitCallEnded(callId, message, body, eventType);
+
     // Acknowledge other lifecycle events without broadcasting full cumulative transcripts
     return res.status(200).json({
       success: true,
@@ -282,6 +334,14 @@ app.post('/api/vapi-webhook', (req, res) => {
       success: false,
       error: 'Internal Server Error while processing webhook',
     });
+  }
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`[Socket.io] Port ${PORT} already active, reusing existing process.`);
+  } else {
+    throw err;
   }
 });
 

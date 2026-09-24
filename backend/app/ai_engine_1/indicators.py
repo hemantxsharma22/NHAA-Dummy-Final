@@ -124,23 +124,50 @@ def classify_assistance_request(text: str) -> Optional[str]:
     return "emergency"
 
 
+CLAUSE_DELIMITERS = re.compile(r"[,;.\n!?]|\b(?:and|but|aur|lekin|par|kyunki|because|or)\b", re.IGNORECASE)
+
+
 def is_phrase_negated(text: str, match_phrase: str) -> bool:
     """
-    Check if a matched phrase is preceded or followed by negation words.
-    Example: 'mujhe darr nahi lag raha' -> True for fear
+    Check if a matched phrase is directly negated within its syntactic clause.
+    English: negation precedes the phrase within 1-3 words ("not scared", "dont feel safe").
+    Hindi/Hinglish: negation immediately precedes or follows ("darr nahi", "safe nahi", "nahi darr").
+    Conjunctions and clause punctuation (, ; . and but aur lekin par) bound negation scope.
     """
-    text_lower = text.lower()
-    phrase_lower = match_phrase.lower()
+    text_lower = (text or "").lower()
+    phrase_lower = (match_phrase or "").lower().strip()
 
-    if phrase_lower not in text_lower:
+    if not phrase_lower or phrase_lower not in text_lower:
         return False
 
     idx = text_lower.find(phrase_lower)
-    pre_window = text_lower[max(0, idx - 35):idx]
-    post_window = text_lower[idx + len(phrase_lower):min(len(text_lower), idx + len(phrase_lower) + 35)]
 
-    words_near = pre_window.split()[-4:] + post_window.split()[:4]
-    return any(neg in words_near for neg in NEGATION_KEYWORDS)
+    # Find the nearest clause delimiter to the left
+    left_delim_pos = 0
+    for m in CLAUSE_DELIMITERS.finditer(text_lower[:idx]):
+        left_delim_pos = m.end()
+
+    # Find the nearest clause delimiter to the right
+    right_delim_pos = len(text_lower)
+    m_right = CLAUSE_DELIMITERS.search(text_lower[idx + len(phrase_lower):])
+    if m_right:
+        right_delim_pos = idx + len(phrase_lower) + m_right.start()
+
+    clause_pre = text_lower[left_delim_pos:idx].strip()
+    clause_post = text_lower[idx + len(phrase_lower):right_delim_pos].strip()
+
+    pre_words = clause_pre.split()[-3:] if clause_pre else []
+    post_words = clause_post.split()[:3] if clause_post else []
+
+    # Check for negation words immediately before in clause (English & Hindi)
+    if any(neg in pre_words for neg in NEGATION_KEYWORDS):
+        return True
+
+    # Check for negation words immediately after in clause (Hindi/Hinglish, e.g. "safe nahi")
+    if any(neg in post_words for neg in NEGATION_KEYWORDS):
+        return True
+
+    return False
 
 
 def is_meta_context_false_positive(text: str) -> bool:
@@ -207,8 +234,27 @@ def detect_indicators(
                 calc_confidence = min(0.98, max(0.80, 0.85 + (len(norm_phrase.split()) * 0.03)))
 
                 if negated:
-                    if not is_calming_cat:
-                        total_calming_weight += 25.0
+                    if is_calming_cat:
+                        # Calming phrase is negated (e.g. "not safe", "dont feel safe", "safe nahi", "surakshit nahi")
+                        # This is NOT calming — it is acute fear/distress!
+                        neg_weight = 34.0
+                        if "FEAR_DISTRESS_PANIC" not in matched_cats:
+                            indicators.append(
+                                IndicatorMatch(
+                                    category="FEAR_DISTRESS_PANIC",
+                                    ui_label="Fear / Distress",
+                                    matched_phrase=phrase,
+                                    evidence_snippet=f"...{snippet}..." if snippet else text,
+                                    weight=neg_weight,
+                                    confidence=0.88,
+                                    is_calming=False,
+                                    is_negated=False,
+                                    is_historical=historical,
+                                )
+                            )
+                            matched_cats.add("FEAR_DISTRESS_PANIC")
+                            total_distress_weight += neg_weight
+                    # If distress phrase was negated ("not scared", "koi khatra nahi"), simply skip without false calming
                     continue
 
                 if meta_false_positive and not is_calming_cat:
@@ -249,6 +295,8 @@ def detect_indicators(
     ml_model = _load_ml_model()
     if ml_model and text.strip() and not meta_false_positive:
         try:
+            logger.info(f'[SVI] Caller message received: "{text[:60]}"')
+            logger.info(f'[SVI] Model invoked: 21-category indicator pipeline')
             pipeline = ml_model["pipeline"]
             classes = ml_model["classes"]
 
@@ -266,11 +314,35 @@ def detect_indicators(
                     prob = float(probs[idx])
                     cat = classes[idx]
 
-                    if cat == "NEUTRAL_NO_INDICATOR" or prob < 0.28:
+                    if cat == "NEUTRAL_NO_INDICATOR" or prob < 0.25:
                         continue
 
                     cat_upper = cat.upper()
                     cat_lower = cat.lower()
+
+                    # Semantic verification for self-harm concern (prevent false positives on "want to")
+                    if cat_upper == "SELF_HARM_CONCERN":
+                        self_harm_roots = ["hurt", "harm", "die", "kill", "suicide", "end my life", "marna", "jaan lena", "nuksan", "mar jana", "jeena nahi"]
+                        if not any(r in ev_text for r in self_harm_roots):
+                            continue
+
+                    # Semantic verification for sexual violence/harassment
+                    if cat_upper == "SEXUAL_VIOLENCE_HARASSMENT":
+                        sh_roots = ["chedchad", "ched", "chhua", "touch", "harass", "harassment", "assault", "rape", "forced", "गलत", "छेड़छाड़", "उत्पीड़न", "यौन"]
+                        if not any(r in ev_text for r in sh_roots):
+                            continue
+
+                    # Check if safety reassurance is negated (e.g. "dont feel safe", "safe nahi")
+                    is_negated_safety = False
+                    if "CURRENT_SAFETY" in cat_upper:
+                        if is_phrase_negated(text, "safe") or is_phrase_negated(text, "surakshit") or any(neg in ev_text.split() for neg in NEGATION_KEYWORDS):
+                            is_negated_safety = True
+
+                    if is_negated_safety:
+                        cat_upper = "FEAR_DISTRESS_PANIC"
+                        cat = "FEAR_DISTRESS_PANIC"
+
+                    logger.info(f'[SVI] Model result: {cat} | Confidence: {prob:.2f}')
 
                     if cat_upper not in matched_cats and cat_lower not in matched_cats:
                         cat_cfg = (
@@ -280,10 +352,10 @@ def detect_indicators(
                         )
                         c_weight = float(cat_cfg.get("weight", 28.0))
                         u_label = cat_cfg.get("ui_label", cat.replace("_", " ").title())
-                        is_calm = c_weight < 0 or "CURRENT_SAFETY" in cat_upper
+                        is_calm = (c_weight < 0 or "CURRENT_SAFETY" in cat_upper) and not is_negated_safety
 
-                        # Check if this clause was negated
-                        if is_phrase_negated(ev_text, ev_text):
+                        # Check if this clause was negated for non-safety
+                        if not is_negated_safety and is_phrase_negated(ev_text, ev_text):
                             continue
 
                         ml_match = IndicatorMatch(
@@ -313,7 +385,6 @@ def detect_indicators(
                                 ind.confidence = max(ind.confidence, round(prob, 2))
         except Exception as e:
             logger.debug(f"ML indicator prediction exception: {e}")
-
 
     # Cap single chunk raw distress contribution
     max_contrib = config.get("svi_config", {}).get("max_single_chunk_contribution", 65)

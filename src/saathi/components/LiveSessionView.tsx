@@ -333,6 +333,8 @@ export function LiveSessionView({
   // Synchronized refs to avoid stale closures in WebSocket event listeners
   const sessionIdRef = useRef<string | null>(null);
   const isSessionActiveRef = useRef<boolean>(false);
+  const endLiveSessionRef = useRef<() => Promise<void>>(async () => {});
+  const isEndingRef = useRef<boolean>(false);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -357,9 +359,16 @@ export function LiveSessionView({
     const lower = text.toLowerCase();
     let delta = 0;
 
+    const isNegatedSafety =
+      lower.includes("not safe") ||
+      lower.includes("dont feel safe") ||
+      lower.includes("don't feel safe") ||
+      lower.includes("safe nahi") ||
+      lower.includes("unsafe");
+
     const highThreat = [
       "maar", "kill", "dhamki", "threat", "khoon", "blood", "chaku", "knife",
-      "gun", "bandook", "murder", "hamla", "jaan se", "attack", "destroy"
+      "gun", "bandook", "murder", "hamla", "jaan se", "attack", "destroy", "danger", "khatra"
     ];
     const moderateDistress = [
       "darr", "dar", "fear", "scared", "panic", "bachao", "help", "madad",
@@ -369,20 +378,28 @@ export function LiveSessionView({
       "safe", "theek", "shant", "calm", "police aa gayi", "alright", "okay", "fine"
     ];
 
-    if (highThreat.some((kw) => lower.includes(kw))) {
-      delta += 30;
+    if (isNegatedSafety) {
+      delta += 25;
+    } else if (highThreat.some((kw) => lower.includes(kw))) {
+      delta += 28;
     } else if (moderateDistress.some((kw) => lower.includes(kw))) {
       delta += 18;
     } else if (calmingSignals.some((kw) => lower.includes(kw))) {
       delta -= 15;
     } else {
-      delta += 4;
+      // Neutral chunk: retain score (silence or neutral conversational answers != safety)
+      delta = 0;
+    }
+
+    if (delta === 0) {
+      console.log(`[SVI] No new caller evidence → retaining score: ${sviScore}`);
+      return;
     }
 
     setSviScore((prev) => {
-      const nextScore = Math.min(100, Math.max(5, prev + delta));
+      const nextScore = Math.min(100, Math.max(0, prev + delta));
       const nextLabel =
-        nextScore >= 80 ? "CRITICAL" : nextScore >= 60 ? "HIGH" : nextScore >= 35 ? "MODERATE" : "LOW";
+        nextScore >= 80 ? "CRITICAL" : nextScore >= 60 ? "HIGH" : nextScore >= 30 ? "MODERATE" : "LOW";
       setSviLabel(nextLabel);
 
       setScoreHistory((prevHistory) => [
@@ -432,7 +449,7 @@ export function LiveSessionView({
         const res = await fetch(`${getApiBaseUrl()}/api/sessions/${targetSessionId}/segment`, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ text: phraseText }),
+          body: new URLSearchParams({ text: phraseText, role: "user", speaker: "caller" }),
           signal: AbortSignal.timeout(2000),
         });
 
@@ -532,9 +549,9 @@ export function LiveSessionView({
     socket.on("phone-transcript", (data: { text: string; role?: string; timestamp?: number }) => {
       if (!data || !data.text) return;
 
-      const rawRole = (data.role || "user").toLowerCase();
-      const isAssistant = rawRole === "assistant" || rawRole === "ai" || rawRole === "bot";
-      const speakerLabel = isAssistant ? "AI" : "Caller";
+      const rawRole = (data.role || "").toLowerCase().trim();
+      const isCaller = rawRole === "user" || rawRole === "caller" || rawRole === "citizen";
+      const speakerLabel = isCaller ? "Caller" : "AI";
       const cleanText = data.text.trim();
 
       const formattedTime = new Date(data.timestamp || Date.now()).toLocaleTimeString([], {
@@ -565,13 +582,19 @@ export function LiveSessionView({
       });
 
       // CRITICAL FOR SVI: Only actual CALLER/USER speech should be passed into caller-risk/SVI scoring logic.
-      // AI/assistant messages MUST NOT affect the caller's threat score.
-      if (!isAssistant) {
-        console.log(`[LiveSessionView] -> Sent to SVI scoring (Caller Speech): "${cleanText}"`);
+      // AI/assistant messages MUST NOT affect the caller's threat score, contributing factors, or score trend.
+      if (isCaller) {
+        console.log(`[SVI] Scoring caller message: "${cleanText}"`);
         scoreTranscriptChunk(cleanText);
       } else {
-        console.log(`[LiveSessionView] -> Ignored for SVI scoring (AI / Assistant Speech): "${cleanText}"`);
+        console.log(`[SVI] Skipping assistant message: "${cleanText}"`);
       }
+    });
+
+    // Listen for phone-call-ended event from Vapi webhook backend
+    socket.on("phone-call-ended", (data?: { callId?: string; reason?: string }) => {
+      console.log(`[LiveSessionView] Phone call ended → ending live session`, data);
+      endLiveSessionRef.current();
     });
 
     // Disconnect the socket on component unmount (cleanup)
@@ -582,6 +605,7 @@ export function LiveSessionView({
   }, []);
 
   const startLiveSession = async () => {
+    isEndingRef.current = false;
     try {
       setStatusNotice(null);
       setCompletedSummary(null);
@@ -704,13 +728,27 @@ export function LiveSessionView({
             setInterimText("");
             setVadState("LISTENING");
             const text = msg.text?.trim();
+            const rawSpeaker = (msg.speaker || "").toLowerCase().trim();
+            const isOperator = rawSpeaker === "operator" || rawSpeaker === "ai" || rawSpeaker === "assistant";
+            const speakerLabel = isOperator ? "OPERATOR" : "CITIZEN";
             if (text) {
               const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              const speakerLabel = msg.speaker === "Operator" ? "OPERATOR" : "CITIZEN";
               setTranscriptEntries((prev) => [
                 ...prev,
                 { id: `t-${Date.now()}`, text: text, timestamp: nowTime, isFinal: true, speaker: speakerLabel as any },
               ]);
+            }
+
+            // CRITICAL FOR SVI: Operator / AI speech must NEVER update SVI, risk metrics, contributing factors or trend
+            if (isOperator) {
+              if (text) {
+                console.log(`[SVI] Skipping assistant message: "${text}"`);
+              }
+              return;
+            }
+
+            if (text) {
+              console.log(`[SVI] Scoring caller message: "${text}"`);
             }
 
             // Upgraded Multimodal Fields
@@ -848,19 +886,23 @@ export function LiveSessionView({
   };
 
   const endLiveSession = async () => {
+    if (isEndingRef.current) return;
+    isEndingRef.current = true;
+
     stopMicCapture();
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
 
-    if (!sessionId) {
+    const targetSessionId = sessionIdRef.current || sessionId;
+    if (!targetSessionId) {
       setIsSessionActive(false);
       return;
     }
 
     try {
-      const res = await fetch(`${getApiBaseUrl()}/api/sessions/${sessionId}/end`, {
+      const res = await fetch(`${getApiBaseUrl()}/api/sessions/${targetSessionId}/end`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -881,6 +923,10 @@ export function LiveSessionView({
       setIsSessionActive(false);
     }
   };
+
+  useEffect(() => {
+    endLiveSessionRef.current = endLiveSession;
+  });
 
   return (
     <div className="space-y-4">

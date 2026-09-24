@@ -128,7 +128,38 @@ async def handle_deepgram_session(websocket: WebSocket, session_id: str, languag
                         if transcript_text.strip():
                             last_vad_state = "PROCESSING"
                             full_transcript_list.append(f"{speaker_label}: {transcript_text.strip()}")
-                            accumulated_transcript = " ".join(full_transcript_list)
+                            is_operator = speaker_label.lower() in ["operator", "assistant", "ai"]
+
+                            if is_operator:
+                                logger.info(f'[SVI] Skipping assistant message: "{transcript_text.strip()}"')
+                                try:
+                                    seg = TranscriptSegment(
+                                        session_id=session_id,
+                                        speaker=speaker_label,
+                                        text=transcript_text.strip(),
+                                        is_final=True,
+                                        confidence=float(parsed.get("confidence", 0.95)),
+                                        start_time=float(parsed.get("start", 0.0)),
+                                        end_time=float(parsed.get("start", 0.0) + parsed.get("duration", 0.0)),
+                                    )
+                                    db_session.add(seg)
+                                    db_session.commit()
+                                except Exception:
+                                    pass
+
+                                await websocket.send_json({
+                                    "type": "final",
+                                    "text": transcript_text.strip(),
+                                    "speaker": speaker_label,
+                                    "vad_state": "LISTENING",
+                                    "is_final": True,
+                                    "timestamp": round(time.time(), 2),
+                                })
+                                continue
+
+                            logger.info(f'[SVI] Scoring caller message: "{transcript_text.strip()}"')
+                            caller_turns = [t for t in full_transcript_list if not t.startswith("Operator:") and not t.startswith("AI:") and not t.startswith("Assistant:")]
+                            accumulated_transcript = " ".join(caller_turns)
 
                             # 1. Audio Quality Calibration & Acoustic Features from recent buffer
                             calib = calibrate_audio_buffer(bytes(audio_buffer_bytes[-64000:]), 16000)
@@ -172,6 +203,7 @@ async def handle_deepgram_session(websocket: WebSocket, session_id: str, languag
                                     text=transcript_text.strip(),
                                     chunk_duration_seconds=parsed.get("duration", 3.5) or 3.5,
                                     stt_source="deepgram_realtime",
+                                    role="user",
                                 )
                             except Exception:
                                 legacy_result = {}

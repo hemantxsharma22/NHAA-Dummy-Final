@@ -76,6 +76,7 @@ def process_text_segment(
     text: str,
     chunk_duration_seconds: float = 3.5,
     stt_source: str = "live_speech",
+    role: str = "user",
 ) -> dict:
     """
     Process an incremental finalized speech segment directly through Engine 1.
@@ -93,6 +94,7 @@ def process_text_segment(
         chunk_duration_seconds=chunk_duration_seconds,
         stt_source=stt_source,
         stt_error=None,
+        role=role,
     )
 
 
@@ -103,42 +105,51 @@ def _process_segment_internal(
     chunk_duration_seconds: float,
     stt_source: str,
     stt_error: Optional[str],
+    role: str = "user",
 ) -> dict:
     """Core logic to analyze text, update SVI, and fetch co-pilot guidance."""
-    word_count = len(text.split()) if text else 0
+    is_assistant = (role or "").lower() in ["assistant", "ai", "bot", "operator", "agent", "model"] or stt_source == "operator"
 
-    indicators, raw_distress, calming_factor = detect_indicators(
-        text=text,
-        config=config,
-        chunk_duration_seconds=chunk_duration_seconds,
-    )
+    if is_assistant:
+        logger.info(f'[SVI] AI message → ignored: "{text[:50]}"')
+        indicators = []
+        calming_factor = 0.0
+        pace_label = "NORMAL"
+    else:
+        logger.info(f'[SVI] Caller message → scoring: "{text[:50]}"')
+        word_count = len(text.split()) if text else 0
 
-    pace_score, pace_label = compute_speech_pace_score(
-        word_count=word_count,
-        chunk_duration_seconds=chunk_duration_seconds,
-        pace_config=config.get("speech_pace_config", {}),
-    )
+        indicators, raw_distress, calming_factor = detect_indicators(
+            text=text,
+            config=config,
+            chunk_duration_seconds=chunk_duration_seconds,
+        )
 
-    state = update_svi(
-        state=state,
-        new_chunk_text=text,
-        raw_distress_score=raw_distress,
-        calming_factor=calming_factor,
-        pace_score=pace_score,
-        pace_label=pace_label,
-        new_indicators=indicators,
-        config=config,
-    )
+        pace_score, pace_label = compute_speech_pace_score(
+            word_count=word_count,
+            chunk_duration_seconds=chunk_duration_seconds,
+            pace_config=config.get("speech_pace_config", {}),
+        )
 
-    # Dynamic location extraction (caller speech only, ignore operator)
-    if stt_source != "operator":
+        state = update_svi(
+            state=state,
+            new_chunk_text=text,
+            raw_distress_score=raw_distress,
+            calming_factor=calming_factor,
+            pace_score=pace_score,
+            pace_label=pace_label,
+            new_indicators=indicators,
+            config=config,
+        )
+
+        # Dynamic location extraction (caller speech only, ignore operator)
         from .location_extractor import extract_location
         curr_loc = getattr(state, "detected_location", {}) or {}
         new_loc = extract_location(text, curr_loc)
         if new_loc:
             state.detected_location = new_loc
 
-    update_session(state.session_id, state)
+        update_session(state.session_id, state)
 
     copilot = get_copilot_suggestion(
         svi_label=state.last_svi_label,
